@@ -751,13 +751,10 @@ textarea {
   justify-content: flex-start;
   flex-wrap: nowrap;
   gap: 5px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-
-.result-balls::-webkit-scrollbar {
-  display: none;
+  overflow: visible;
+  padding: 4px 0 6px;
+  min-height: 42px;
+  align-items: center;
 }
 
 .result-balls .ball {
@@ -766,11 +763,15 @@ textarea {
   font-size: 0.76rem;
   border-width: 2px;
   flex-shrink: 0;
+  box-sizing: border-box;
 }
 
 .result-balls .ball.hit {
-  transform: scale(1.04);
-  box-shadow: 0 0 0 2px var(--hit), 0 0 10px rgba(110, 231, 183, 0.45);
+  transform: none;
+  border-color: #fff;
+  box-shadow:
+    0 0 0 2px var(--hit),
+    0 3px 10px rgba(110, 231, 183, 0.35);
 }
 
 .result-balls .plus {
@@ -873,6 +874,8 @@ textarea {
 
   .result-balls {
     gap: 3px;
+    padding: 5px 0 7px;
+    min-height: 38px;
   }
 
   .result-balls .ball {
