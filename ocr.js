@@ -618,23 +618,11 @@
       reader.onload = function () {
         const img = new Image();
         img.onload = function () {
-          const canvas = document.createElement("canvas");
-          const maxWidth = 1800;
-          const scale = Math.min(1, maxWidth / img.width);
-          canvas.width = Math.round(img.width * scale);
-          canvas.height = Math.round(img.height * scale);
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const pixels = imageData.data;
-          for (let i = 0; i < pixels.length; i += 4) {
-            const gray = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
-            const contrast = Math.min(255, Math.max(0, (gray - 110) * 1.8 + 128));
-            pixels[i] = pixels[i + 1] = pixels[i + 2] = contrast;
+          try {
+            resolve(buildPreprocessVariants(img));
+          } catch (err) {
+            reject(err);
           }
-          ctx.putImageData(imageData, 0, 0);
-          resolve(canvas.toDataURL("image/jpeg", 0.92));
         };
         img.onerror = function () {
           reject(new Error("图片格式不支持"));
@@ -645,38 +633,211 @@
     });
   }
 
+  function canvasToDataUrl(canvas) {
+    return canvas.toDataURL("image/jpeg", 0.92);
+  }
+
+  function applyContrastEnhancement(imageData) {
+    const pixels = imageData.data;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const gray = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+      let value = (gray - 110) * 1.85 + 128;
+      value = 128 + (value - 128) * 1.12;
+      value = Math.min(255, Math.max(0, value));
+      pixels[i] = pixels[i + 1] = pixels[i + 2] = value;
+    }
+  }
+
+  function applyAdaptiveThreshold(imageData, width, height) {
+    const pixels = imageData.data;
+    const gray = new Float32Array(width * height);
+    for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
+      gray[p] = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+    }
+
+    const block = 15;
+    const half = Math.floor(block / 2);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        let sum = 0;
+        let count = 0;
+        for (let dy = -half; dy <= half; dy += 1) {
+          for (let dx = -half; dx <= half; dx += 1) {
+            const ny = y + dy;
+            const nx = x + dx;
+            if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
+              sum += gray[ny * width + nx];
+              count += 1;
+            }
+          }
+        }
+        const localMean = sum / count;
+        const idx = y * width + x;
+        const sharp = Math.min(255, Math.max(0, gray[idx] + (gray[idx] - localMean) * 0.35));
+        const binary = sharp > localMean - 10 ? 255 : 0;
+        const offset = idx * 4;
+        pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = binary;
+        pixels[offset + 3] = 255;
+      }
+    }
+  }
+
+  function renderVariant(sourceCanvas, sx, sy, sw, sh, mode) {
+    const width = Math.max(1, Math.round(sw));
+    const height = Math.max(1, Math.round(sh));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, width, height);
+    const imageData = ctx.getImageData(0, 0, width, height);
+    if (mode === "adaptive") {
+      applyAdaptiveThreshold(imageData, width, height);
+    } else {
+      applyContrastEnhancement(imageData);
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return canvas;
+  }
+
+  function buildPreprocessVariants(img) {
+    const maxWidth = 1800;
+    const scale = Math.min(1, maxWidth / img.width);
+    const width = Math.round(img.width * scale);
+    const height = Math.round(img.height * scale);
+    const base = document.createElement("canvas");
+    base.width = width;
+    base.height = height;
+    base.getContext("2d").drawImage(img, 0, 0, width, height);
+
+    const lowerY = Math.round(height * 0.26);
+    const lowerH = height - lowerY;
+    const midY = Math.round(height * 0.18);
+    const midH = Math.round(height * 0.72);
+
+    const specs = [
+      { id: "full-contrast", sx: 0, sy: 0, sw: width, sh: height, mode: "contrast" },
+      { id: "full-adaptive", sx: 0, sy: 0, sw: width, sh: height, mode: "adaptive" },
+      { id: "lower-contrast", sx: 0, sy: lowerY, sw: width, sh: lowerH, mode: "contrast" },
+      { id: "lower-adaptive", sx: 0, sy: lowerY, sw: width, sh: lowerH, mode: "adaptive" },
+      { id: "mid-contrast", sx: 0, sy: midY, sw: width, sh: midH, mode: "contrast" },
+    ];
+
+    const variants = specs.map(function (spec) {
+      const canvas = renderVariant(base, spec.sx, spec.sy, spec.sw, spec.sh, spec.mode);
+      return { id: spec.id, dataUrl: canvasToDataUrl(canvas) };
+    });
+
+    return {
+      previewUrl: variants[0].dataUrl,
+      variants: variants,
+    };
+  }
+
+  const OCR_PSM_MODES = ["6", "11", "13"];
+
+  function lineSortKey(line) {
+    const match = String(line).match(/(\d{2})/);
+    return match ? parseInt(match[1], 10) : 999;
+  }
+
+  function mergeParsedLines(texts, lotteryType) {
+    const votes = {};
+    const order = [];
+
+    texts.forEach(function (text) {
+      if (!text || !String(text).trim()) return;
+      parseTextToLines(text, lotteryType).forEach(function (line) {
+        votes[line] = (votes[line] || 0) + 1;
+        if (order.indexOf(line) === -1) order.push(line);
+      });
+    });
+
+    if (!order.length) return [];
+
+    order.sort(function (a, b) {
+      const voteDiff = (votes[b] || 0) - (votes[a] || 0);
+      if (voteDiff !== 0) return voteDiff;
+      return lineSortKey(a) - lineSortKey(b);
+    });
+
+    let merged = uniqueKeepOrder(order);
+
+    if (lotteryType === "ssq" && merged.length > 5) {
+      merged = merged
+        .slice()
+        .sort(function (a, b) {
+          const voteDiff = (votes[b] || 0) - (votes[a] || 0);
+          if (voteDiff !== 0) return voteDiff;
+          return lineSortKey(a) - lineSortKey(b);
+        })
+        .slice(0, 5)
+        .sort(function (a, b) {
+          return lineSortKey(a) - lineSortKey(b);
+        });
+    }
+
+    return merged;
+  }
+
+  async function runMultiPassOcr(Tesseract, variants, onProgress) {
+    const worker = await Tesseract.createWorker("eng");
+    await worker.setParameters({
+      tessedit_char_whitelist: "0123456789 +|.,:选 ",
+    });
+
+    const texts = [];
+    const total = variants.length * OCR_PSM_MODES.length;
+    let done = 0;
+
+    for (let v = 0; v < variants.length; v += 1) {
+      for (let p = 0; p < OCR_PSM_MODES.length; p += 1) {
+        await worker.setParameters({
+          tessedit_pageseg_mode: OCR_PSM_MODES[p],
+        });
+        const result = await worker.recognize(variants[v].dataUrl);
+        texts.push(result.data.text || "");
+        done += 1;
+        if (onProgress) {
+          onProgress("增强识别中 " + done + "/" + total + "...");
+        }
+      }
+    }
+
+    await worker.terminate();
+    return texts;
+  }
+
   async function recognizeLotteryImage(file, lotteryType, onProgress) {
     if (!file) throw new Error("请先选择或拍摄照片");
     if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
 
     onProgress && onProgress("正在预处理图片...");
-    const imageUrl = await preprocessImage(file);
+    const prepared = await preprocessImage(file);
 
     onProgress && onProgress("正在加载 OCR 引擎...");
     const Tesseract = await loadTesseract();
 
-    onProgress && onProgress("正在识别号码，请稍候...");
-    const result = await Tesseract.recognize(imageUrl, "eng", {
-      logger: function (message) {
-        if (message.status === "recognizing text" && onProgress) {
-          onProgress("识别中 " + Math.round((message.progress || 0) * 100) + "%");
-        }
-      },
-      tessedit_char_whitelist: "0123456789 +|.,:选 ",
-      tessedit_pageseg_mode: "6",
-    });
+    onProgress && onProgress("正在多通道识别，请稍候...");
+    const ocrTexts = await runMultiPassOcr(Tesseract, prepared.variants, onProgress);
 
-    const rawText = result.data.text || "";
+    const rawText = ocrTexts
+      .map(function (text) {
+        return String(text || "").trim();
+      })
+      .filter(Boolean)
+      .join("\n---\n");
+
     const detectedType = detectLotteryType(rawText);
     const activeType = detectedType || lotteryType;
-    const lines = parseTextToLines(rawText, activeType);
+    const lines = mergeParsedLines(ocrTexts, activeType);
 
     return {
       rawText: rawText.trim(),
       lines: lines,
       detectedType: detectedType,
       activeType: activeType,
-      previewUrl: imageUrl,
+      previewUrl: prepared.previewUrl,
     };
   }
 
