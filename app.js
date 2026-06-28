@@ -1,4 +1,4 @@
-const APP_VERSION = "1.0.7";
+const APP_VERSION = "1.0.8";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
@@ -424,7 +424,7 @@ function renderMyNumbersPreview() {
 
   if (!lines.length) {
     els.myNumbersPreview.innerHTML =
-      '<div class="numbers-preview-empty">识别或输入后，下方按号码球展示，方便核对</div>';
+      '<div class="numbers-preview-empty">识别或输入后，右侧按号码球展示</div>';
     return;
   }
 

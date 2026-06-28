@@ -86,17 +86,19 @@
           <h2>我的号码</h2>
         </div>
         <div class="field field-numbers">
-          <label for="myNumbers">每行一注</label>
-          <textarea
-            id="myNumbers"
-            rows="8"
-            spellcheck="false"
-            autocomplete="off"
-            autocapitalize="off"
-            placeholder="双色球：01 05 12 18 25 33 + 08&#10;福彩3D：130&#10;七乐彩：03 08 12 15 22 27 30 + 18&#10;快乐8：选5: 03 11 22 35 68"
-          ></textarea>
-          <div id="myNumbersPreview" class="numbers-preview">
-            <div class="numbers-preview-empty">识别或输入后，下方按号码球展示，方便核对</div>
+          <label for="myNumbers">每行一注 · 右侧预览</label>
+          <div class="numbers-editor">
+            <textarea
+              id="myNumbers"
+              rows="8"
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              placeholder="双色球：01 05 12 18 25 33 + 08&#10;福彩3D：130&#10;七乐彩：03 08 12 15 22 27 30 + 18&#10;快乐8：选5: 03 11 22 35 68"
+            ></textarea>
+            <div id="myNumbersPreview" class="numbers-preview">
+              <div class="numbers-preview-empty">识别或输入后，右侧按号码球展示</div>
+            </div>
           </div>
         </div>
         <div id="inputHint" class="hint"></div>
