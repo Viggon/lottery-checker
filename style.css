@@ -451,9 +451,98 @@ textarea:focus {
 }
 
 textarea {
-  min-height: 100px;
+  min-height: 168px;
   resize: vertical;
-  line-height: 1.6;
+  line-height: 1.85;
+}
+
+textarea#myNumbers {
+  min-height: 220px;
+  font-family: "SF Mono", "Cascadia Mono", Consolas, "PingFang SC", monospace;
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  line-height: 2;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.field-numbers {
+  margin-bottom: 8px;
+}
+
+.numbers-preview {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.numbers-preview-empty {
+  padding: 14px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(250, 248, 255, 0.88);
+  border: 1.5px dashed rgba(184, 169, 255, 0.35);
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.numbers-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1.5px solid rgba(184, 169, 255, 0.22);
+}
+
+.numbers-preview-row-error {
+  border-color: rgba(255, 143, 171, 0.45);
+  background: rgba(255, 240, 245, 0.92);
+}
+
+.numbers-preview-index {
+  flex: 0 0 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--pink-deep);
+  background: rgba(255, 143, 171, 0.14);
+}
+
+.numbers-preview-balls {
+  flex: 1;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.numbers-preview-balls .ball {
+  width: 36px;
+  height: 36px;
+  font-size: 0.82rem;
+  border-width: 2px;
+}
+
+.numbers-preview-balls .plus {
+  margin: 0 2px;
+  font-size: 1rem;
+}
+
+.numbers-preview-raw {
+  flex: 1;
+  font-family: "SF Mono", Consolas, monospace;
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #c0395b;
+  word-break: break-all;
 }
 
 /* ── Buttons ── */
