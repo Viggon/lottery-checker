@@ -1,3 +1,5 @@
+const APP_VERSION = "1.0.4";
+
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
 const LOTTERY = {
@@ -315,6 +317,7 @@ const els = {
   menuClose: document.getElementById("menuClose"),
   menuBackdrop: document.getElementById("menuBackdrop"),
   currentLotteryLabel: document.getElementById("currentLotteryLabel"),
+  appVersion: document.getElementById("appVersion"),
 };
 
 function normalize2(value) {
@@ -938,4 +941,7 @@ els.menuBackdrop.addEventListener("click", closeMenu);
 
 onTypeChange();
 loadAccessInfo();
+if (els.appVersion) {
+  els.appVersion.textContent = "v" + APP_VERSION;
+}
 fetchDraws();

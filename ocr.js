@@ -25,13 +25,36 @@
     return n.length === 1 ? "0" + n : n;
   }
 
+  function letterToDigit(ch) {
+    const map = {
+      O: "0",
+      o: "0",
+      Q: "0",
+      I: "1",
+      l: "1",
+      L: "1",
+      Z: "2",
+      z: "2",
+      S: "5",
+      s: "5",
+      G: "9",
+      g: "9",
+      B: "8",
+      b: "8",
+      T: "7",
+      t: "7",
+    };
+    return map[ch] != null ? map[ch] : null;
+  }
+
   function fixOcrText(text, preserveLines) {
     let result = text
       .replace(/[OoQ]/g, "0")
       .replace(/[Il|]/g, "1")
       .replace(/[，,；;／/\\|｜＝=：:]/g, " ")
       .replace(/[【】\[\]()（）{}]/g, " ")
-      .replace(/[＋]/g, "+");
+      .replace(/[＋]/g, "+")
+      .replace(/[.$#@&A-Za-z]{0,2}(\d{1,2})\s*\+\s*(\d{1,2})/g, " $1 + $2 ");
 
     if (preserveLines) {
       return result
@@ -46,10 +69,153 @@
     return result.replace(/\s+/g, " ").trim();
   }
 
+  function ballsFromToken(raw) {
+    const token = String(raw || "").trim();
+    if (!token) return [];
+
+    const out = [];
+    const seen = new Set();
+
+    function add(num) {
+      if (!num) return;
+      const n = normalize2(num);
+      if (!inRange(n, 1, 33)) return;
+      if (seen.has(n)) return;
+      seen.add(n);
+      out.push(n);
+    }
+
+    function addCandidates(list) {
+      list.forEach(add);
+    }
+
+    const cleaned = token
+      .replace(/[$#@]/g, "")
+      .replace(/[xX×]/g, "")
+      .replace(/[.,]/g, " ")
+      .replace(/[OoQ]/g, "0")
+      .replace(/[Il|]/g, "1");
+
+    const compact = cleaned.replace(/\s+/g, "");
+    const digitsOnly = compact.replace(/\D/g, "");
+
+    if (/^[0-9]{1,2}$/.test(compact)) {
+      add(compact);
+      return out;
+    }
+
+    if (/^[0-9OIl][A-Za-z]$/.test(compact)) {
+      const d1 = letterToDigit(compact[0]) || compact[0];
+      const d2 = letterToDigit(compact[1]) || letterToDigit(compact[1].toUpperCase());
+      if (d2 != null) add("" + d1 + d2);
+      if (compact[1].toLowerCase() === "g") add("" + d1 + "4");
+      if (compact[1].toUpperCase() === "S") add("" + d1 + "9");
+      return out;
+    }
+
+    if (digitsOnly.length === 3) {
+      addCandidates([
+        digitsOnly.slice(0, 2),
+        digitsOnly.slice(1),
+        digitsOnly.slice(0, 1) + letterToDigit(digitsOnly[2]),
+      ].filter(Boolean));
+      return out;
+    }
+
+    if (digitsOnly.length === 4) {
+      add(digitsOnly.slice(0, 2));
+      add(digitsOnly.slice(2));
+      return out;
+    }
+
+    if (digitsOnly.length >= 5) {
+      for (let i = 0; i + 1 < digitsOnly.length; i += 2) {
+        add(digitsOnly.slice(i, i + 2));
+      }
+      return out;
+    }
+
+    cleaned.split(/\s+/).filter(Boolean).forEach(function (part) {
+      ballsFromToken(part).forEach(function (n) {
+        add(n);
+      });
+    });
+
+    return out;
+  }
+
+  function extractBallTokens(text) {
+    const fixed = fixOcrText(text, false);
+    const out = [];
+    fixed.split(/[\s+]+/).filter(Boolean).forEach(function (token) {
+      ballsFromToken(token).forEach(function (n) {
+        out.push(n);
+      });
+    });
+    return out;
+  }
+
   function extractNumbers(text) {
-    const fixed = fixOcrText(text);
-    const matches = fixed.match(/\d{1,2}/g) || [];
-    return matches.map(normalize2);
+    return extractBallTokens(text);
+  }
+
+  function solveRedsFromTokens(tokens) {
+    const options = tokens.map(function (token) {
+      return ballsFromToken(token);
+    });
+
+    function dfs(idx, path) {
+      if (path.length === 6) {
+        return isValidSsqReds(path) ? path.slice() : null;
+      }
+      if (idx >= options.length) return null;
+
+      const current = options[idx];
+      if (!current.length) {
+        return dfs(idx + 1, path);
+      }
+
+      for (let i = 0; i < current.length; i += 1) {
+        const n = current[i];
+        if (path.length && parseInt(n, 10) <= parseInt(path[path.length - 1], 10)) continue;
+        if (path.indexOf(n) !== -1) continue;
+        path.push(n);
+        const found = dfs(idx + 1, path);
+        if (found) return found;
+        path.pop();
+      }
+
+      return dfs(idx + 1, path);
+    }
+
+    return dfs(0, []);
+  }
+
+  function parseSsqPlusLines(text) {
+    const lines = [];
+    text.split(/\n+/).forEach(function (chunk) {
+      if (!/\+/.test(chunk)) return;
+      if (isSsqMetadataLine(chunk)) return;
+
+      const plusPos = chunk.indexOf("+");
+      const redPart = chunk.slice(0, plusPos);
+      const bluePart = chunk.slice(plusPos + 1);
+      const blueCandidates = extractBallTokens(bluePart).filter(function (n) {
+        return inRange(n, 1, 16);
+      });
+      if (!blueCandidates.length) return;
+
+      const tokens = redPart.split(/\s+/).filter(function (token) {
+        return token && /\d/.test(token);
+      });
+      if (tokens.length < 4) return;
+
+      const reds = solveRedsFromTokens(tokens);
+      if (reds) {
+        lines.push(reds.join(" ") + " + " + blueCandidates[0]);
+      }
+    });
+    return uniqueKeepOrder(lines);
   }
 
   function inRange(num, min, max) {
@@ -107,9 +273,9 @@
 
   function looksLikeSsqNumberLine(chunk) {
     if (isSsqMetadataLine(chunk)) return false;
-    const nums = extractNumbers(chunk);
-    if (/\+/.test(chunk) && nums.length >= 7) return true;
-    return nums.length >= 7 && nums.length <= 14;
+    if (/\+/.test(chunk) && /\d/.test(chunk)) return true;
+    const nums = extractBallTokens(chunk);
+    return nums.length >= 7 && nums.length <= 16;
   }
 
   function parseSsqLineFromChunk(chunk) {
@@ -165,6 +331,9 @@
   }
 
   function parseSsqLines(text) {
+    const plusLines = parseSsqPlusLines(text);
+    if (plusLines.length) return plusLines;
+
     const lines = [];
     const chunks = text.split(/\n+/);
 
