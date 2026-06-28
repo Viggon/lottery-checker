@@ -25,14 +25,25 @@
     return n.length === 1 ? "0" + n : n;
   }
 
-  function fixOcrText(text) {
-    return text
+  function fixOcrText(text, preserveLines) {
+    let result = text
       .replace(/[OoQ]/g, "0")
       .replace(/[Il|]/g, "1")
-      .replace(/[，,；;／/\\|｜＋+＝=：:]/g, " ")
+      .replace(/[，,；;／/\\|｜＝=：:]/g, " ")
       .replace(/[【】\[\]()（）{}]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+      .replace(/[＋]/g, "+");
+
+    if (preserveLines) {
+      return result
+        .split(/\n/)
+        .map(function (line) {
+          return line.replace(/[^\S\n]+/g, " ").trim();
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+
+    return result.replace(/\s+/g, " ").trim();
   }
 
   function extractNumbers(text) {
@@ -134,6 +145,25 @@
     return null;
   }
 
+  function parseSsqFromStream(text) {
+    const lines = [];
+    const nums = extractNumbers(text);
+    let index = 0;
+
+    while (index <= nums.length - 7) {
+      const reds = nums.slice(index, index + 6);
+      const blue = nums[index + 6];
+      if (isValidSsqReds(reds) && inRange(blue, 1, 16)) {
+        lines.push(reds.join(" ") + " + " + blue);
+        index += 7;
+      } else {
+        index += 1;
+      }
+    }
+
+    return uniqueKeepOrder(lines);
+  }
+
   function parseSsqLines(text) {
     const lines = [];
     const chunks = text.split(/\n+/);
@@ -160,7 +190,8 @@
       }
     });
 
-    return uniqueKeepOrder(lines);
+    if (lines.length) return uniqueKeepOrder(lines);
+    return parseSsqFromStream(text);
   }
 
   function buildSsqTicket(nums, start) {
@@ -271,7 +302,7 @@
   }
 
   function parseTextToLines(text, lotteryType) {
-    const cleaned = fixOcrText(text);
+    const cleaned = fixOcrText(text, true);
     switch (lotteryType) {
       case "ssq":
         return parseSsqLines(cleaned);
@@ -340,6 +371,7 @@
         }
       },
       tessedit_char_whitelist: "0123456789 +|.,:选 ",
+      tessedit_pageseg_mode: "6",
     });
 
     const rawText = result.data.text || "";

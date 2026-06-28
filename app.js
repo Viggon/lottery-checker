@@ -492,20 +492,33 @@ async function fetchLotteryPayload(type, limit) {
   }
 }
 
-function applyRecognizedLines(lines, detectedType) {
+function applyRecognizedLines(lines, detectedType, replace) {
   if (detectedType && detectedType !== els.lotteryType.value) {
     els.lotteryType.value = detectedType;
     onTypeChange();
   }
   if (!lines.length) return false;
-  const existing = els.myNumbers.value.trim();
-  const merged = existing ? existing + "\n" + lines.join("\n") : lines.join("\n");
-  els.myNumbers.value = merged;
+  const merged = lines.join("\n");
+  if (replace) {
+    els.myNumbers.value = merged;
+  } else {
+    const existing = els.myNumbers.value.trim();
+    els.myNumbers.value = existing ? existing + "\n" + merged : merged;
+  }
+  saveNumbers(state.type, els.myNumbers.value);
   return true;
+}
+
+function resetOcrNumbers() {
+  els.myNumbers.value = "";
+  state.ocrLines = [];
+  saveNumbers(state.type, "");
+  els.compareResults.innerHTML = '<div class="empty-state">还没有对照结果哦 ~</div>';
 }
 
 async function handleOcrFile(file) {
   if (!file) return;
+  resetOcrNumbers();
   setOcrStatus("准备识别...");
   els.fillNumbersBtn.classList.add("hidden");
   els.ocrCompareBtn.classList.add("hidden");
@@ -528,10 +541,13 @@ async function handleOcrFile(file) {
     if (result.detectedType && result.detectedType !== els.lotteryType.value) {
       els.lotteryType.value = result.detectedType;
       onTypeChange();
+      els.myNumbers.value = "";
+      saveNumbers(state.type, "");
     }
 
     if (result.lines.length) {
-      setOcrStatus(`识别完成，共 ${result.lines.length} 注：${result.lines.join(" ｜ ")}`);
+      applyRecognizedLines(result.lines, null, true);
+      setOcrStatus(`识别完成，共 ${result.lines.length} 注，已填入「我的号码」：${result.lines.join(" ｜ ")}`);
       els.fillNumbersBtn.classList.remove("hidden");
       els.ocrCompareBtn.classList.remove("hidden");
       els.ocrActionRow.classList.remove("hidden");
@@ -553,7 +569,7 @@ function onOcrInputChange(event) {
 
 function fillRecognizedNumbers() {
   if (state.ocrLines.length) {
-    applyRecognizedLines(state.ocrLines, null);
+    applyRecognizedLines(state.ocrLines, null, true);
     setOcrStatus("已填入「我的号码」，请核对后点击对照");
     return;
   }
@@ -561,7 +577,7 @@ function fillRecognizedNumbers() {
     els.ocrRawText.textContent,
     els.lotteryType.value
   );
-  if (applyRecognizedLines(manualLines, null)) {
+  if (applyRecognizedLines(manualLines, null, true)) {
     setOcrStatus("已根据原文重新解析并填入");
   } else {
     setOcrStatus("未能提取号码，请手动输入", true);
