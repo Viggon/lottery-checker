@@ -1,4 +1,4 @@
-const APP_VERSION = "1.0.6";
+const APP_VERSION = "1.0.7";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
@@ -307,6 +307,8 @@ const els = {
   ocrPreviewWrap: document.getElementById("ocrPreviewWrap"),
   ocrPreview: document.getElementById("ocrPreview"),
   ocrStatus: document.getElementById("ocrStatus"),
+  ocrResults: document.getElementById("ocrResults"),
+  ocrResultsList: document.getElementById("ocrResultsList"),
   ocrRawWrap: document.getElementById("ocrRawWrap"),
   ocrRawText: document.getElementById("ocrRawText"),
   fillNumbersBtn: document.getElementById("fillNumbersBtn"),
@@ -414,6 +416,47 @@ function setOcrStatus(text, isError = false) {
   els.ocrStatus.className = isError ? "status error" : "status";
 }
 
+function renderOcrResults(lines) {
+  if (!els.ocrResults || !els.ocrResultsList) return;
+
+  const visible = (lines || []).slice(0, 5);
+  if (!visible.length) {
+    els.ocrResults.classList.add("hidden");
+    els.ocrResultsList.innerHTML = "";
+    return;
+  }
+
+  const cfg = LOTTERY[state.type || els.lotteryType.value];
+  els.ocrResultsList.innerHTML = visible
+    .map(function (line, index) {
+      try {
+        const ticket = cfg.parse(line);
+        return (
+          '<div class="ocr-result-item">' +
+          '<div class="ticket-line">第 ' +
+          (index + 1) +
+          " 注</div>" +
+          '<div class="balls ocr-result-balls">' +
+          cfg.renderDraw(ticket) +
+          "</div></div>"
+        );
+      } catch (err) {
+        return (
+          '<div class="ocr-result-item ocr-result-item-error">' +
+          '<div class="ticket-line">第 ' +
+          (index + 1) +
+          " 注</div>" +
+          '<div class="status error">' +
+          escapeHtml(line) +
+          "</div></div>"
+        );
+      }
+    })
+    .join("");
+
+  els.ocrResults.classList.remove("hidden");
+}
+
 function setStatus(text, isError = false) {
   els.fetchStatus.textContent = text;
   els.fetchStatus.className = isError ? "status-line error" : "status-line";
@@ -516,6 +559,7 @@ function resetOcrNumbers() {
   els.myNumbers.value = "";
   state.ocrLines = [];
   saveNumbers(state.type, "");
+  renderOcrResults([]);
   els.compareResults.innerHTML = '<div class="empty-state">还没有对照结果哦 ~</div>';
 }
 
@@ -550,11 +594,16 @@ async function handleOcrFile(file) {
 
     if (result.lines.length) {
       applyRecognizedLines(result.lines, null, true);
-      setOcrStatus(`识别完成，共 ${result.lines.length} 注，已填入「我的号码」：${result.lines.join(" ｜ ")}`);
+      renderOcrResults(result.lines);
+      setOcrStatus(
+        `识别完成，共 ${result.lines.length} 注，已填入「我的号码」` +
+          (result.lines.length > 5 ? "（下方展示前 5 注）" : "")
+      );
       els.fillNumbersBtn.classList.remove("hidden");
       els.ocrCompareBtn.classList.remove("hidden");
       els.ocrActionRow.classList.remove("hidden");
     } else {
+      renderOcrResults([]);
       setOcrStatus("识别完成，但未提取到有效号码。可查看原文手动修改，或重新拍照。", true);
       els.fillNumbersBtn.classList.remove("hidden");
       els.ocrActionRow.classList.remove("hidden");
@@ -573,6 +622,7 @@ function onOcrInputChange(event) {
 function fillRecognizedNumbers() {
   if (state.ocrLines.length) {
     applyRecognizedLines(state.ocrLines, null, true);
+    renderOcrResults(state.ocrLines);
     setOcrStatus("已填入「我的号码」，请核对后点击对照");
     return;
   }
@@ -581,6 +631,7 @@ function fillRecognizedNumbers() {
     els.lotteryType.value
   );
   if (applyRecognizedLines(manualLines, null, true)) {
+    renderOcrResults(manualLines);
     setOcrStatus("已根据原文重新解析并填入");
   } else {
     setOcrStatus("未能提取号码，请手动输入", true);

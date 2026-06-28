@@ -611,6 +611,58 @@ textarea {
   object-fit: contain;
 }
 
+.ocr-results {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(250, 248, 255, 0.92);
+  border: 2px solid rgba(184, 169, 255, 0.22);
+}
+
+.ocr-results-head {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.ocr-result-item {
+  padding: 12px;
+  margin-top: 10px;
+  border-radius: 14px;
+  background: #faf8ff;
+  border: 2px solid rgba(184, 169, 255, 0.18);
+}
+
+.ocr-result-item:first-child {
+  margin-top: 0;
+}
+
+.ocr-result-item-error {
+  border-color: rgba(255, 143, 171, 0.35);
+  background: rgba(255, 240, 245, 0.92);
+}
+
+.ocr-result-item .ticket-line {
+  margin-bottom: 8px;
+}
+
+.ocr-result-balls {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.ocr-result-balls .ball {
+  width: 36px;
+  height: 36px;
+  font-size: 0.82rem;
+  border-width: 2px;
+}
+
+.ocr-result-balls .plus {
+  font-size: 1rem;
+}
+
 .ocr-raw {
   margin-top: 12px;
   color: var(--muted);
@@ -832,5 +884,11 @@ textarea {
     width: 38px;
     height: 38px;
     font-size: 0.85rem;
+  }
+
+  .ocr-result-balls .ball {
+    width: 32px;
+    height: 32px;
+    font-size: 0.75rem;
   }
 }
