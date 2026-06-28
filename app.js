@@ -1,4 +1,4 @@
-const APP_VERSION = "1.0.8";
+const APP_VERSION = "1.0.6";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
@@ -297,7 +297,6 @@ const els = {
   nextDrawMeta: document.getElementById("nextDrawMeta"),
   drawBalls: document.getElementById("drawBalls"),
   myNumbers: document.getElementById("myNumbers"),
-  myNumbersPreview: document.getElementById("myNumbersPreview"),
   inputHint: document.getElementById("inputHint"),
   compareResults: document.getElementById("compareResults"),
   saveBtn: document.getElementById("saveBtn"),
@@ -410,52 +409,6 @@ function renderBallRow(nums, cls, hits = []) {
     .join("");
 }
 
-function renderMyNumbersPreview() {
-  if (!els.myNumbersPreview) return;
-
-  const type = state.type || els.lotteryType.value;
-  const cfg = LOTTERY[type];
-  const lines = els.myNumbers.value
-    .split(/\n/)
-    .map(function (line) {
-      return line.trim();
-    })
-    .filter(Boolean);
-
-  if (!lines.length) {
-    els.myNumbersPreview.innerHTML =
-      '<div class="numbers-preview-empty">识别或输入后，右侧按号码球展示</div>';
-    return;
-  }
-
-  els.myNumbersPreview.innerHTML = lines
-    .map(function (line, index) {
-      try {
-        const ticket = cfg.parse(line);
-        return (
-          '<div class="numbers-preview-row">' +
-          '<span class="numbers-preview-index">' +
-          (index + 1) +
-          "</span>" +
-          '<div class="balls numbers-preview-balls">' +
-          cfg.renderDraw(ticket) +
-          "</div></div>"
-        );
-      } catch (err) {
-        return (
-          '<div class="numbers-preview-row numbers-preview-row-error">' +
-          '<span class="numbers-preview-index">' +
-          (index + 1) +
-          "</span>" +
-          '<span class="numbers-preview-raw">' +
-          escapeHtml(line) +
-          "</span></div>"
-        );
-      }
-    })
-    .join("");
-}
-
 function setOcrStatus(text, isError = false) {
   els.ocrStatus.textContent = text;
   els.ocrStatus.className = isError ? "status error" : "status";
@@ -556,7 +509,6 @@ function applyRecognizedLines(lines, detectedType, replace) {
     els.myNumbers.value = existing ? existing + "\n" + merged : merged;
   }
   saveNumbers(state.type, els.myNumbers.value);
-  renderMyNumbersPreview();
   return true;
 }
 
@@ -564,7 +516,6 @@ function resetOcrNumbers() {
   els.myNumbers.value = "";
   state.ocrLines = [];
   saveNumbers(state.type, "");
-  renderMyNumbersPreview();
   els.compareResults.innerHTML = '<div class="empty-state">还没有对照结果哦 ~</div>';
 }
 
@@ -939,7 +890,6 @@ function onTypeChange() {
   syncLotteryTabs(type);
   els.inputHint.textContent = LOTTERY[type].hint;
   els.myNumbers.value = loadSavedNumbers(type);
-  renderMyNumbersPreview();
   state.currentDraw = null;
   state.nextDraw = null;
   if (nextDrawTimer) {
@@ -983,9 +933,7 @@ els.saveBtn.addEventListener("click", () => {
 els.clearBtn.addEventListener("click", () => {
   els.myNumbers.value = "";
   saveNumbers(state.type, "");
-  renderMyNumbersPreview();
 });
-els.myNumbers.addEventListener("input", renderMyNumbersPreview);
 
 els.menuBtn.addEventListener("click", openMenu);
 els.menuClose.addEventListener("click", closeMenu);
