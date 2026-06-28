@@ -609,7 +609,260 @@
     }
   }
 
-  function preprocessImage(file) {
+  let openCvPromise = null;
+
+  function loadOpenCV() {
+    if (global.cv && global.cv.imread) return Promise.resolve(global.cv);
+    if (openCvPromise) return openCvPromise;
+    openCvPromise = new Promise(function (resolve, reject) {
+      const timeout = setTimeout(function () {
+        reject(new Error("OpenCV 加载超时"));
+      }, 90000);
+      global.Module = {
+        onRuntimeInitialized: function () {
+          clearTimeout(timeout);
+          resolve(global.cv);
+        },
+      };
+      const script = document.createElement("script");
+      script.src = "https://docs.opencv.org/4.9.0/opencv.js";
+      script.async = true;
+      script.onerror = function () {
+        clearTimeout(timeout);
+        reject(new Error("OpenCV 加载失败"));
+      };
+      document.head.appendChild(script);
+    });
+    return openCvPromise;
+  }
+
+  function createScaledCanvas(img) {
+    const maxWidth = 1800;
+    const scale = Math.min(1, maxWidth / img.width);
+    const width = Math.max(1, Math.round(img.width * scale));
+    const height = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(img, 0, 0, width, height);
+    return canvas;
+  }
+
+  function rotateCanvas(source, angleDeg) {
+    if (!angleDeg) return source;
+    const rad = (angleDeg * Math.PI) / 180;
+    const sin = Math.abs(Math.sin(rad));
+    const cos = Math.abs(Math.cos(rad));
+    const w = source.width;
+    const h = source.height;
+    const nw = Math.max(1, Math.ceil(w * cos + h * sin));
+    const nh = Math.max(1, Math.ceil(w * sin + h * cos));
+    const canvas = document.createElement("canvas");
+    canvas.width = nw;
+    canvas.height = nh;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, nw, nh);
+    ctx.translate(nw / 2, nh / 2);
+    ctx.rotate(rad);
+    ctx.drawImage(source, -w / 2, -h / 2);
+    return canvas;
+  }
+
+  function estimateSkewAngle(sourceCanvas) {
+    const sampleW = 420;
+    const scale = Math.min(1, sampleW / sourceCanvas.width);
+    const w = Math.max(1, Math.round(sourceCanvas.width * scale));
+    const h = Math.max(1, Math.round(sourceCanvas.height * scale));
+    const sample = document.createElement("canvas");
+    sample.width = w;
+    sample.height = h;
+    sample.getContext("2d").drawImage(sourceCanvas, 0, 0, w, h);
+    const pixels = sample.getContext("2d").getImageData(0, 0, w, h).data;
+    const binary = new Uint8Array(w * h);
+    for (let i = 0, p = 0; i < pixels.length; i += 4, p += 1) {
+      const gray = 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
+      binary[p] = gray < 150 ? 1 : 0;
+    }
+
+    function score(angle) {
+      const rad = (angle * Math.PI) / 180;
+      const sin = Math.sin(rad);
+      const cos = Math.cos(rad);
+      const bins = new Uint32Array(h);
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          if (!binary[y * w + x]) continue;
+          const yr = Math.round(x * sin + y * cos);
+          if (yr >= 0 && yr < h) bins[yr] += 1;
+        }
+      }
+      let mean = 0;
+      for (let i = 0; i < h; i += 1) mean += bins[i];
+      mean /= h;
+      let variance = 0;
+      for (let i = 0; i < h; i += 1) {
+        const diff = bins[i] - mean;
+        variance += diff * diff;
+      }
+      return variance;
+    }
+
+    let bestAngle = 0;
+    let bestScore = 0;
+    for (let angle = -20; angle <= 20; angle += 1) {
+      const current = score(angle);
+      if (current > bestScore) {
+        bestScore = current;
+        bestAngle = angle;
+      }
+    }
+    return Math.abs(bestAngle) >= 0.8 ? bestAngle : 0;
+  }
+
+  function deskewCanvas(sourceCanvas) {
+    const angle = estimateSkewAngle(sourceCanvas);
+    return angle ? rotateCanvas(sourceCanvas, angle) : sourceCanvas;
+  }
+
+  function distPoint(a, b) {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function orderQuadPoints(points) {
+    const sorted = points.slice().sort(function (a, b) {
+      return a.y - b.y;
+    });
+    const top = sorted.slice(0, 2).sort(function (a, b) {
+      return a.x - b.x;
+    });
+    const bottom = sorted.slice(2, 4).sort(function (a, b) {
+      return a.x - b.x;
+    });
+    return [top[0], top[1], bottom[1], bottom[0]];
+  }
+
+  function tryPerspectiveCorrect(sourceCanvas, cv) {
+    const srcMat = cv.imread(sourceCanvas);
+    const gray = new cv.Mat();
+    const blur = new cv.Mat();
+    const edges = new cv.Mat();
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    let outCanvas = null;
+
+    try {
+      cv.cvtColor(srcMat, gray, cv.COLOR_RGBA2GRAY);
+      cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0);
+      cv.Canny(blur, edges, 40, 140);
+
+      cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+      const imageArea = sourceCanvas.width * sourceCanvas.height;
+      let bestQuad = null;
+      let bestArea = 0;
+
+      for (let i = 0; i < contours.size(); i += 1) {
+        const contour = contours.get(i);
+        const area = cv.contourArea(contour);
+        if (area < imageArea * 0.18 || area > imageArea * 0.96) continue;
+
+        const peri = cv.arcLength(contour, true);
+        const approx = new cv.Mat();
+        cv.approxPolyDP(contour, approx, 0.02 * peri, true);
+        if (approx.rows === 4 && area > bestArea) {
+          const points = [];
+          for (let j = 0; j < 4; j += 1) {
+            points.push({
+              x: approx.data32S[j * 2],
+              y: approx.data32S[j * 2 + 1],
+            });
+          }
+          bestArea = area;
+          bestQuad = points;
+        }
+        approx.delete();
+      }
+
+      if (!bestQuad) return null;
+
+      const ordered = orderQuadPoints(bestQuad);
+      const widthTop = distPoint(ordered[0], ordered[1]);
+      const widthBottom = distPoint(ordered[3], ordered[2]);
+      const maxWidth = Math.max(1, Math.round(Math.max(widthTop, widthBottom)));
+      const heightLeft = distPoint(ordered[0], ordered[3]);
+      const heightRight = distPoint(ordered[1], ordered[2]);
+      const maxHeight = Math.max(1, Math.round(Math.max(heightLeft, heightRight)));
+
+      const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        ordered[0].x,
+        ordered[0].y,
+        ordered[1].x,
+        ordered[1].y,
+        ordered[2].x,
+        ordered[2].y,
+        ordered[3].x,
+        ordered[3].y,
+      ]);
+      const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        0,
+        0,
+        maxWidth - 1,
+        0,
+        maxWidth - 1,
+        maxHeight - 1,
+        0,
+        maxHeight - 1,
+      ]);
+      const transform = cv.getPerspectiveTransform(srcTri, dstTri);
+      const dst = new cv.Mat();
+      cv.warpPerspective(srcMat, dst, transform, new cv.Size(maxWidth, maxHeight));
+
+      outCanvas = document.createElement("canvas");
+      outCanvas.width = maxWidth;
+      outCanvas.height = maxHeight;
+      cv.imshow(outCanvas, dst);
+
+      srcTri.delete();
+      dstTri.delete();
+      transform.delete();
+      dst.delete();
+    } finally {
+      srcMat.delete();
+      gray.delete();
+      blur.delete();
+      edges.delete();
+      contours.delete();
+      hierarchy.delete();
+    }
+
+    return outCanvas;
+  }
+
+  async function prepareTicketCanvas(img, onProgress) {
+    let base = createScaledCanvas(img);
+    onProgress && onProgress("正在校正拍摄角度...");
+    base = deskewCanvas(base);
+
+    try {
+      onProgress && onProgress("正在加载透视校正...");
+      const cv = await loadOpenCV();
+      onProgress && onProgress("正在拉平票面...");
+      const warped = tryPerspectiveCorrect(base, cv);
+      if (warped) base = warped;
+    } catch (_) {
+      /* OpenCV 不可用时仍使用倾斜校正结果 */
+    }
+
+    return base;
+  }
+
+  function preprocessImage(file, onProgress) {
     return new Promise(function (resolve, reject) {
       const reader = new FileReader();
       reader.onerror = function () {
@@ -618,11 +871,11 @@
       reader.onload = function () {
         const img = new Image();
         img.onload = function () {
-          try {
-            resolve(buildPreprocessVariants(img));
-          } catch (err) {
-            reject(err);
-          }
+          prepareTicketCanvas(img, onProgress)
+            .then(function (base) {
+              resolve(buildPreprocessVariantsFromCanvas(base));
+            })
+            .catch(reject);
         };
         img.onerror = function () {
           reject(new Error("图片格式不支持"));
@@ -700,15 +953,9 @@
     return canvas;
   }
 
-  function buildPreprocessVariants(img) {
-    const maxWidth = 1800;
-    const scale = Math.min(1, maxWidth / img.width);
-    const width = Math.round(img.width * scale);
-    const height = Math.round(img.height * scale);
-    const base = document.createElement("canvas");
-    base.width = width;
-    base.height = height;
-    base.getContext("2d").drawImage(img, 0, 0, width, height);
+  function buildPreprocessVariantsFromCanvas(base) {
+    const width = base.width;
+    const height = base.height;
 
     const lowerY = Math.round(height * 0.26);
     const lowerH = height - lowerY;
@@ -729,55 +976,50 @@
     });
 
     return {
-      previewUrl: variants[0].dataUrl,
+      previewUrl: canvasToDataUrl(base),
       variants: variants,
     };
   }
 
   const OCR_PSM_MODES = ["6", "11", "13"];
 
-  function lineSortKey(line) {
-    const match = String(line).match(/(\d{2})/);
-    return match ? parseInt(match[1], 10) : 999;
-  }
-
   function mergeParsedLines(texts, lotteryType) {
     const votes = {};
-    const order = [];
+    const firstSeen = {};
 
-    texts.forEach(function (text) {
+    texts.forEach(function (text, textIndex) {
       if (!text || !String(text).trim()) return;
-      parseTextToLines(text, lotteryType).forEach(function (line) {
+      parseTextToLines(text, lotteryType).forEach(function (line, lineIndex) {
         votes[line] = (votes[line] || 0) + 1;
-        if (order.indexOf(line) === -1) order.push(line);
+        const position = textIndex * 10000 + lineIndex;
+        if (firstSeen[line] == null || position < firstSeen[line]) {
+          firstSeen[line] = position;
+        }
       });
     });
 
-    if (!order.length) return [];
+    const lines = Object.keys(firstSeen);
+    if (!lines.length) return [];
 
-    order.sort(function (a, b) {
-      const voteDiff = (votes[b] || 0) - (votes[a] || 0);
-      if (voteDiff !== 0) return voteDiff;
-      return lineSortKey(a) - lineSortKey(b);
+    lines.sort(function (a, b) {
+      return firstSeen[a] - firstSeen[b];
     });
 
-    let merged = uniqueKeepOrder(order);
-
-    if (lotteryType === "ssq" && merged.length > 5) {
-      merged = merged
+    if (lotteryType === "ssq" && lines.length > 5) {
+      return lines
         .slice()
         .sort(function (a, b) {
           const voteDiff = (votes[b] || 0) - (votes[a] || 0);
           if (voteDiff !== 0) return voteDiff;
-          return lineSortKey(a) - lineSortKey(b);
+          return firstSeen[a] - firstSeen[b];
         })
         .slice(0, 5)
         .sort(function (a, b) {
-          return lineSortKey(a) - lineSortKey(b);
+          return firstSeen[a] - firstSeen[b];
         });
     }
 
-    return merged;
+    return lines;
   }
 
   async function runMultiPassOcr(Tesseract, variants, onProgress) {
@@ -813,7 +1055,7 @@
     if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
 
     onProgress && onProgress("正在预处理图片...");
-    const prepared = await preprocessImage(file);
+    const prepared = await preprocessImage(file, onProgress);
 
     onProgress && onProgress("正在加载 OCR 引擎...");
     const Tesseract = await loadTesseract();

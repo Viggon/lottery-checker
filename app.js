@@ -1,4 +1,4 @@
-const APP_VERSION = "1.1.3";
+const APP_VERSION = "1.2.0";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
