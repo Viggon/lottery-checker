@@ -1,4 +1,4 @@
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.2.2";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
@@ -322,6 +322,10 @@ const els = {
   cameraInput: document.getElementById("cameraInput"),
   ocrPreviewWrap: document.getElementById("ocrPreviewWrap"),
   ocrPreview: document.getElementById("ocrPreview"),
+  ocrProgressWrap: document.getElementById("ocrProgressWrap"),
+  ocrProgressTrack: document.getElementById("ocrProgressTrack"),
+  ocrProgressFill: document.getElementById("ocrProgressFill"),
+  ocrProgressPct: document.getElementById("ocrProgressPct"),
   ocrStatus: document.getElementById("ocrStatus"),
   ocrRawWrap: document.getElementById("ocrRawWrap"),
   ocrRawText: document.getElementById("ocrRawText"),
@@ -422,9 +426,34 @@ function renderBallRow(nums, cls, hits = []) {
     .join("");
 }
 
-function setOcrStatus(text, isError = false) {
+function updateOcrProgress(percent) {
+  if (!els.ocrProgressWrap) return;
+  if (percent == null || percent < 0) {
+    els.ocrProgressWrap.classList.add("hidden");
+    els.ocrProgressWrap.setAttribute("aria-hidden", "true");
+    return;
+  }
+
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  els.ocrProgressWrap.classList.remove("hidden");
+  els.ocrProgressWrap.setAttribute("aria-hidden", "false");
+  if (els.ocrProgressFill) els.ocrProgressFill.style.width = value + "%";
+  if (els.ocrProgressPct) els.ocrProgressPct.textContent = value + "%";
+  if (els.ocrProgressTrack) els.ocrProgressTrack.setAttribute("aria-valuenow", String(value));
+}
+
+function setOcrStatus(text, isError = false, percent) {
   els.ocrStatus.textContent = text;
   els.ocrStatus.className = isError ? "status error" : "status";
+  if (isError || percent == null) {
+    updateOcrProgress(null);
+  } else {
+    updateOcrProgress(percent);
+  }
+}
+
+function onOcrProgress(message, percent) {
+  setOcrStatus(message, false, percent);
 }
 
 function setStatus(text, isError = false) {
@@ -510,6 +539,7 @@ async function fetchLotteryPayload(type, limit) {
 
 function resetOcrSession() {
   state.ocrLines = [];
+  updateOcrProgress(null);
   els.compareResults.innerHTML =
     '<div class="empty-state">拍照识别后，对照结果会显示在这里 ~</div>';
 }
@@ -517,14 +547,14 @@ function resetOcrSession() {
 async function handleOcrFile(file) {
   if (!file) return;
   resetOcrSession();
-  setOcrStatus("准备识别...");
+  setOcrStatus("准备识别...", false, 0);
   els.ocrRawWrap.classList.add("hidden");
 
   try {
     const result = await window.LotteryOcr.recognizeLotteryImage(
       file,
       els.lotteryType.value,
-      setOcrStatus
+      onOcrProgress
     );
 
     els.ocrPreview.src = result.previewUrl;

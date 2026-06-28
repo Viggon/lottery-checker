@@ -609,30 +609,64 @@
     }
   }
 
+  const OPENCV_LOAD_TIMEOUT_MS = 6000;
+  const OPENCV_SCRIPT =
+    "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.1/dist/opencv.js";
   let openCvPromise = null;
 
   function loadOpenCV() {
     if (global.cv && global.cv.imread) return Promise.resolve(global.cv);
     if (openCvPromise) return openCvPromise;
+
     openCvPromise = new Promise(function (resolve, reject) {
-      const timeout = setTimeout(function () {
-        reject(new Error("OpenCV 加载超时"));
-      }, 90000);
-      global.Module = {
-        onRuntimeInitialized: function () {
-          clearTimeout(timeout);
-          resolve(global.cv);
-        },
-      };
-      const script = document.createElement("script");
-      script.src = "https://docs.opencv.org/4.9.0/opencv.js";
-      script.async = true;
-      script.onerror = function () {
+      let settled = false;
+
+      function finishOk() {
+        if (settled) return;
+        if (!global.cv || !global.cv.imread) return;
+        settled = true;
         clearTimeout(timeout);
-        reject(new Error("OpenCV 加载失败"));
+        resolve(global.cv);
+      }
+
+      function finishErr(err) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        openCvPromise = null;
+        reject(err);
+      }
+
+      const timeout = setTimeout(function () {
+        finishErr(new Error("OpenCV 加载超时"));
+      }, OPENCV_LOAD_TIMEOUT_MS);
+
+      const previousModule = global.Module || {};
+      global.Module = Object.assign({}, previousModule, {
+        onRuntimeInitialized: function () {
+          finishOk();
+        },
+      });
+
+      const script = document.createElement("script");
+      script.src = OPENCV_SCRIPT;
+      script.async = true;
+      script.onload = function () {
+        finishOk();
+        if (settled) return;
+        let tries = 0;
+        const poll = setInterval(function () {
+          tries += 1;
+          finishOk();
+          if (settled || tries >= 30) clearInterval(poll);
+        }, 200);
+      };
+      script.onerror = function () {
+        finishErr(new Error("OpenCV 加载失败"));
       };
       document.head.appendChild(script);
     });
+
     return openCvPromise;
   }
 
@@ -844,35 +878,39 @@
     return outCanvas;
   }
 
-  async function prepareTicketCanvas(img, onProgress) {
+  async function prepareTicketCanvas(img, report) {
     let base = createScaledCanvas(img);
-    onProgress && onProgress("正在校正拍摄角度...");
+    report(10, "正在校正拍摄角度...");
     base = deskewCanvas(base);
 
     try {
-      onProgress && onProgress("正在加载透视校正...");
+      report(16, "正在尝试透视校正...");
       const cv = await loadOpenCV();
-      onProgress && onProgress("正在拉平票面...");
+      report(24, "正在拉平票面...");
       const warped = tryPerspectiveCorrect(base, cv);
       if (warped) base = warped;
+      report(32, "透视校正完成");
     } catch (_) {
-      /* OpenCV 不可用时仍使用倾斜校正结果 */
+      report(32, "透视校正跳过，继续识别...");
     }
 
     return base;
   }
 
-  function preprocessImage(file, onProgress) {
+  function preprocessImage(file, report) {
     return new Promise(function (resolve, reject) {
       const reader = new FileReader();
       reader.onerror = function () {
         reject(new Error("读取图片失败"));
       };
       reader.onload = function () {
+        report(4, "正在读取图片...");
         const img = new Image();
         img.onload = function () {
-          prepareTicketCanvas(img, onProgress)
+          report(6, "正在预处理图片...");
+          prepareTicketCanvas(img, report)
             .then(function (base) {
+              report(34, "预处理完成");
               resolve(buildPreprocessVariantsFromCanvas(base));
             })
             .catch(reject);
@@ -1022,7 +1060,14 @@
     return lines;
   }
 
-  async function runMultiPassOcr(Tesseract, variants, onProgress) {
+  function makeProgressReporter(onProgress) {
+    return function report(percent, message) {
+      if (!onProgress) return;
+      onProgress(message, Math.max(0, Math.min(100, Math.round(percent))));
+    };
+  }
+
+  async function runMultiPassOcr(Tesseract, variants, onPass) {
     const worker = await Tesseract.createWorker("eng");
     await worker.setParameters({
       tessedit_char_whitelist: "0123456789 +|.,:选 ",
@@ -1040,9 +1085,7 @@
         const result = await worker.recognize(variants[v].dataUrl);
         texts.push(result.data.text || "");
         done += 1;
-        if (onProgress) {
-          onProgress("增强识别中 " + done + "/" + total + "...");
-        }
+        if (onPass) onPass(done, total);
       }
     }
 
@@ -1054,14 +1097,20 @@
     if (!file) throw new Error("请先选择或拍摄照片");
     if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
 
-    onProgress && onProgress("正在预处理图片...");
-    const prepared = await preprocessImage(file, onProgress);
+    const report = makeProgressReporter(onProgress);
+    report(2, "准备识别...");
+    const prepared = await preprocessImage(file, report);
 
-    onProgress && onProgress("正在加载 OCR 引擎...");
+    report(36, "正在加载 OCR 引擎...");
     const Tesseract = await loadTesseract();
 
-    onProgress && onProgress("正在多通道识别，请稍候...");
-    const ocrTexts = await runMultiPassOcr(Tesseract, prepared.variants, onProgress);
+    report(40, "正在识别号码...");
+    const ocrTexts = await runMultiPassOcr(Tesseract, prepared.variants, function (done, total) {
+      const percent = 40 + (done / total) * 52;
+      report(percent, "增强识别中 " + done + "/" + total);
+    });
+
+    report(94, "正在整理识别结果...");
 
     const rawText = ocrTexts
       .map(function (text) {

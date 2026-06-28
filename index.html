@@ -60,7 +60,7 @@
           <span class="card-icon">📷</span>
           <h2>拍照识别</h2>
         </div>
-        <p class="hint">对准彩票号码区，尽量拍全票面。斜拍会自动校正，识别约需十五秒。</p>
+        <p class="hint">对准彩票号码区，尽量拍全票面。斜拍会自动校正，识别约需十秒。</p>
         <label class="scan-btn">
           <span class="scan-btn-icon" aria-hidden="true"></span>
           <span class="scan-btn-text">拍摄彩票识别号码</span>
@@ -69,7 +69,22 @@
         <div id="ocrPreviewWrap" class="ocr-preview-wrap hidden">
           <img id="ocrPreview" alt="彩票照片预览" />
         </div>
-        <div id="ocrStatus" class="status"></div>
+        <div id="ocrProgressWrap" class="ocr-progress hidden" aria-hidden="true">
+          <div
+            id="ocrProgressTrack"
+            class="ocr-progress-track"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+          >
+            <div id="ocrProgressFill" class="ocr-progress-fill"></div>
+          </div>
+          <div class="ocr-progress-row">
+            <div id="ocrStatus" class="status"></div>
+            <span id="ocrProgressPct" class="ocr-progress-pct">0%</span>
+          </div>
+        </div>
         <details id="ocrRawWrap" class="ocr-raw hidden">
           <summary>查看识别原文</summary>
           <pre id="ocrRawText"></pre>

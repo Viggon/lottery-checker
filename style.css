@@ -596,6 +596,50 @@ textarea {
   color: #e57373;
 }
 
+.ocr-progress {
+  margin-top: 12px;
+}
+
+.ocr-progress.hidden {
+  display: none !important;
+}
+
+.ocr-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(184, 169, 255, 0.2);
+  overflow: hidden;
+}
+
+.ocr-progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--pink) 0%, var(--lavender) 100%);
+  transition: width 0.25s ease;
+}
+
+.ocr-progress-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.ocr-progress-row .status {
+  margin-top: 0;
+  flex: 1;
+}
+
+.ocr-progress-pct {
+  flex: 0 0 auto;
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--lavender);
+  font-variant-numeric: tabular-nums;
+}
+
 .ocr-preview-wrap {
   margin-top: 14px;
   border-radius: var(--radius-sm);
