@@ -1,4 +1,4 @@
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.2";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
@@ -60,13 +60,20 @@ const LOTTERY = {
         level,
         name,
         detail: `红球中 ${redHit} 个，蓝球${blueHit ? "中" : "未中"}`,
-        hits: { red: matched.drawHits, blue: blueHit ? [draw.blue] : [] },
+        hits: { red: matched.drawHits, blue: blueHit ? [ticket.blue] : [] },
       };
     },
     renderDraw(draw) {
       return renderBallRow(draw.red, "red", draw._hits?.red) +
         '<span class="plus">+</span>' +
         renderBallRow([draw.blue], "blue", draw._hits?.blue);
+    },
+    renderTicket(ticket, hits) {
+      return (
+        renderBallRow(ticket.red, "red", hits?.red) +
+        '<span class="plus">+</span>' +
+        renderBallRow([ticket.blue], "blue", hits?.blue)
+      );
     },
   },
   fcsd: {
@@ -102,6 +109,9 @@ const LOTTERY = {
     },
     renderDraw(draw) {
       return renderBallRow(draw.digits, "gold", draw._hits?.digits);
+    },
+    renderTicket(ticket, hits) {
+      return renderBallRow(ticket.digits, "gold", hits?.digits);
     },
   },
   qlc: {
@@ -166,7 +176,7 @@ const LOTTERY = {
         detail: `基本号中 ${basicHit} 个，特别号${specialHit ? "中" : "未中"}`,
         hits: {
           basic: matched.drawHits,
-          special: specialHit ? [draw.special] : [],
+          special: specialHit ? [ticket.special] : [],
         },
       };
     },
@@ -174,6 +184,13 @@ const LOTTERY = {
       return renderBallRow(draw.basic, "gold", draw._hits?.basic) +
         '<span class="plus">+</span>' +
         renderBallRow([draw.special], "blue", draw._hits?.special);
+    },
+    renderTicket(ticket, hits) {
+      return (
+        renderBallRow(ticket.basic, "gold", hits?.basic) +
+        '<span class="plus">+</span>' +
+        renderBallRow([ticket.special], "blue", hits?.special)
+      );
     },
   },
   klb: {
@@ -220,6 +237,9 @@ const LOTTERY = {
     },
     renderDraw(draw) {
       return renderBallRow(draw.nums, "gold", draw._hits?.nums);
+    },
+    renderTicket(ticket, hits) {
+      return renderBallRow(ticket.nums, "gold", hits?.nums);
     },
   },
 };
@@ -767,7 +787,6 @@ function compareNumbers(lines) {
         const ticket = cfg.parse(line);
         const result = cfg.check(ticket, state.currentDraw);
         const prize = resolvePrizeAmount(state.type, result, state.currentDraw);
-        const drawView = Object.assign({}, state.currentDraw, { _hits: result.hits });
         const winClass =
           result.level > 0 && (prize.amount > 0 || prize.floating) ? "win" : "lose";
 
@@ -783,16 +802,14 @@ function compareNumbers(lines) {
 
         return `
           <div class="result-item">
-            <div class="ticket-line">第 ${index + 1} 注：${escapeHtml(line)}</div>
             <div class="prize ${winClass}">${result.name}<span class="tag">${result.detail}</span></div>
             <div class="${moneyClass}">单注奖金：${escapeHtml(prize.text)}</div>
-            <div class="balls" style="margin-top:8px">${cfg.renderDraw(drawView)}</div>
+            <div class="balls result-balls">${cfg.renderTicket(ticket, result.hits)}</div>
           </div>
         `;
       } catch (err) {
         return `
           <div class="result-item">
-            <div class="ticket-line">第 ${index + 1} 注：${escapeHtml(line)}</div>
             <div class="status error">${escapeHtml(err.message)}</div>
           </div>
         `;
