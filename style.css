@@ -790,6 +790,11 @@ textarea {
   line-height: 1.6;
 }
 
+.result-summary-top {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
 .tag {
   display: inline-block;
   padding: 3px 10px;

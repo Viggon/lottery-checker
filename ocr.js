@@ -66,11 +66,87 @@
     return out;
   }
 
+  function isAscending(nums) {
+    for (let i = 1; i < nums.length; i += 1) {
+      if (parseInt(nums[i], 10) <= parseInt(nums[i - 1], 10)) return false;
+    }
+    return true;
+  }
+
+  function isValidSsqReds(reds) {
+    if (reds.length !== 6) return false;
+    const seen = new Set();
+    for (let i = 0; i < reds.length; i += 1) {
+      const n = reds[i];
+      if (!inRange(n, 1, 33)) return false;
+      if (seen.has(n)) return false;
+      seen.add(n);
+      if (i > 0 && parseInt(n, 10) <= parseInt(reds[i - 1], 10)) return false;
+    }
+    return true;
+  }
+
+  function isSsqMetadataLine(chunk) {
+    return (
+      /站号|流水|金额|销售|开奖|验票|贡献|福利|管理中心|玩法|复式|单式|倍数|期/.test(chunk) ||
+      /^[A-F0-9-]{8,}/i.test(chunk.trim()) ||
+      /^\d{4}\s*[\/年-]\s*\d{1,2}/.test(chunk.trim())
+    );
+  }
+
+  function looksLikeSsqNumberLine(chunk) {
+    if (isSsqMetadataLine(chunk)) return false;
+    const nums = extractNumbers(chunk);
+    if (/\+/.test(chunk) && nums.length >= 7) return true;
+    return nums.length >= 7 && nums.length <= 14;
+  }
+
+  function parseSsqLineFromChunk(chunk) {
+    const cleaned = chunk.trim();
+    if (!cleaned) return null;
+
+    if (/\+/.test(cleaned)) {
+      const parts = cleaned.split(/\+/);
+      if (parts.length >= 2) {
+        const reds = extractNumbers(parts[0]).filter(function (n) {
+          return inRange(n, 1, 33);
+        });
+        const blues = extractNumbers(parts.slice(1).join(" ")).filter(function (n) {
+          return inRange(n, 1, 16);
+        });
+        if (reds.length >= 6 && blues.length >= 1) {
+          const red6 = reds.slice(0, 6);
+          if (isValidSsqReds(red6)) {
+            return red6.join(" ") + " + " + blues[0];
+          }
+        }
+      }
+    }
+
+    const nums = extractNumbers(cleaned);
+    for (let start = 0; start <= nums.length - 7; start += 1) {
+      const reds = nums.slice(start, start + 6);
+      const blue = nums[start + 6];
+      if (isValidSsqReds(reds) && inRange(blue, 1, 16)) {
+        return reds.join(" ") + " + " + blue;
+      }
+    }
+    return null;
+  }
+
   function parseSsqLines(text) {
     const lines = [];
     const chunks = text.split(/\n+/);
 
-    chunks.concat([text]).forEach(function (chunk) {
+    chunks.forEach(function (chunk) {
+      if (!looksLikeSsqNumberLine(chunk)) return;
+
+      const direct = parseSsqLineFromChunk(chunk);
+      if (direct) {
+        lines.push(direct);
+        return;
+      }
+
       const nums = extractNumbers(chunk);
       let index = 0;
       while (index < nums.length) {
@@ -100,7 +176,7 @@
           return inRange(n, 1, 33);
         }));
 
-        if (reds.length !== 6) continue;
+        if (!isValidSsqReds(reds)) continue;
         return {
           line: reds.join(" ") + " + " + blue,
           nextIndex: start + blueIndex + 1,

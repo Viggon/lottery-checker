@@ -854,7 +854,7 @@ function compareNumbers() {
   }
 
   els.compareResults.innerHTML =
-    html + `<div class="result-summary">${escapeHtml(summary)}</div>`;
+    `<div class="result-summary result-summary-top">${escapeHtml(summary)}</div>` + html;
 }
 
 function escapeHtml(text) {
