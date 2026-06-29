@@ -609,10 +609,24 @@
     }
   }
 
-  const OPENCV_LOAD_TIMEOUT_MS = 6000;
+  const OPENCV_LOAD_TIMEOUT_MS = 5000;
   const OPENCV_SCRIPT =
     "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.1/dist/opencv.js";
   let openCvPromise = null;
+  let openCvScriptEl = null;
+
+  function shouldUsePerspectiveCorrection() {
+    if (global.cv && global.cv.imread) return true;
+    const touch =
+      typeof navigator !== "undefined" &&
+      (navigator.maxTouchPoints > 0 ||
+        /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent || ""));
+    const narrow =
+      typeof window !== "undefined" &&
+      window.matchMedia &&
+      window.matchMedia("(max-width: 768px)").matches;
+    return !(touch || narrow);
+  }
 
   function loadOpenCV() {
     if (global.cv && global.cv.imread) return Promise.resolve(global.cv);
@@ -634,6 +648,10 @@
         settled = true;
         clearTimeout(timeout);
         openCvPromise = null;
+        if (openCvScriptEl && openCvScriptEl.parentNode) {
+          openCvScriptEl.parentNode.removeChild(openCvScriptEl);
+          openCvScriptEl = null;
+        }
         reject(err);
       }
 
@@ -651,6 +669,7 @@
       const script = document.createElement("script");
       script.src = OPENCV_SCRIPT;
       script.async = true;
+      openCvScriptEl = script;
       script.onload = function () {
         finishOk();
         if (settled) return;
@@ -658,7 +677,14 @@
         const poll = setInterval(function () {
           tries += 1;
           finishOk();
-          if (settled || tries >= 30) clearInterval(poll);
+          if (settled) {
+            clearInterval(poll);
+            return;
+          }
+          if (tries >= 25) {
+            clearInterval(poll);
+            finishErr(new Error("OpenCV 初始化超时"));
+          }
         }, 200);
       };
       script.onerror = function () {
@@ -883,15 +909,19 @@
     report(10, "正在校正拍摄角度...");
     base = deskewCanvas(base);
 
-    try {
-      report(16, "正在尝试透视校正...");
-      const cv = await loadOpenCV();
-      report(24, "正在拉平票面...");
-      const warped = tryPerspectiveCorrect(base, cv);
-      if (warped) base = warped;
-      report(32, "透视校正完成");
-    } catch (_) {
-      report(32, "透视校正跳过，继续识别...");
+    if (shouldUsePerspectiveCorrection()) {
+      try {
+        report(16, "正在尝试透视校正...");
+        const cv = await loadOpenCV();
+        report(24, "正在拉平票面...");
+        const warped = tryPerspectiveCorrect(base, cv);
+        if (warped) base = warped;
+        report(32, "透视校正完成");
+      } catch (_) {
+        report(32, "透视校正跳过，继续识别...");
+      }
+    } else {
+      report(32, "继续识别...");
     }
 
     return base;
@@ -1122,6 +1152,7 @@
     const detectedType = detectLotteryType(rawText);
     const activeType = detectedType || lotteryType;
     const lines = mergeParsedLines(ocrTexts, activeType);
+    report(100, "识别完成");
 
     return {
       rawText: rawText.trim(),
