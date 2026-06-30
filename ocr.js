@@ -660,6 +660,7 @@
 
   function loadOpenCV() {
     if (global.cv && global.cv.imread) return Promise.resolve(global.cv);
+    if (global.__lotteryOpenCvReady) return global.__lotteryOpenCvReady;
     if (openCvPromise) return openCvPromise;
 
     openCvPromise = new Promise(function (resolve, reject) {
