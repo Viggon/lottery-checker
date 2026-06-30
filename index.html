@@ -128,7 +128,24 @@
       </div>
     </div>
 
+    <script>
+      window.LotteryOcrEngine = {
+        ready: false,
+        initEngine: function () {
+          return Promise.reject(new Error("OCR 引擎正在加载，请稍候"));
+        },
+      };
+    </script>
     <script type="module" src="./ocr-engine.mjs"></script>
+    <script nomodule>
+      document.addEventListener("DOMContentLoaded", function () {
+        window.LotteryOcrEngine = {
+          initEngine: function () {
+            return Promise.reject(new Error("当前浏览器不支持 OCR 模块，请使用 Edge/Chrome/Safari 最新版"));
+          },
+        };
+      });
+    </script>
     <script src="./ocr.js"></script>
     <script src="./app.js"></script>
   </body>

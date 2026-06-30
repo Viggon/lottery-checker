@@ -1,11 +1,16 @@
-import { PaddleOCR } from "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
-
-const ORT_WASM = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/";
 const MODEL_DET = new URL("./paddle-models/PP-OCRv5_mobile_det_onnx_infer.tar", import.meta.url);
 const MODEL_REC = new URL("./paddle-models/PP-OCRv5_mobile_rec_onnx_infer.tar", import.meta.url);
+const ORT_WASM = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/";
 const INIT_TIMEOUT_MS = 180000;
 
+const PADDLE_IMPORT_URLS = [
+  "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm",
+  "https://unpkg.com/@paddleocr/paddleocr-js@0.4.2/dist/index.mjs",
+];
+
 let enginePromise = null;
+let paddleModulePromise = null;
+let cachedEngine = null;
 
 function withTimeout(promise, ms, message) {
   return Promise.race([
@@ -20,8 +25,8 @@ function withTimeout(promise, ms, message) {
 
 function formatPaddleError(err) {
   const msg = String((err && err.message) || err || "未知错误");
-  if (/fetch|network|Failed to fetch|download/i.test(msg)) {
-    return "PaddleOCR 模型加载失败，请刷新页面后重试";
+  if (/fetch|network|Failed to fetch|download|import/i.test(msg)) {
+    return "PaddleOCR 组件或模型加载失败，请检查网络后刷新重试";
   }
   if (/timeout|超时/i.test(msg)) {
     return "PaddleOCR 加载超时，请刷新后重试";
@@ -30,6 +35,30 @@ function formatPaddleError(err) {
     return "内存不足，请关闭其他标签页或使用更小的照片";
   }
   return "PaddleOCR 加载失败：" + msg;
+}
+
+async function loadPaddleModule(onProgress) {
+  if (paddleModulePromise) return paddleModulePromise;
+
+  paddleModulePromise = (async function () {
+    onProgress && onProgress("正在下载 PaddleOCR 组件...", 36);
+    let lastError = null;
+
+    for (let i = 0; i < PADDLE_IMPORT_URLS.length; i += 1) {
+      try {
+        const mod = await import(/* @vite-ignore */ PADDLE_IMPORT_URLS[i]);
+        if (mod && mod.PaddleOCR) return mod;
+      } catch (err) {
+        lastError = err;
+        console.warn("PaddleOCR import failed:", PADDLE_IMPORT_URLS[i], err);
+      }
+    }
+
+    paddleModulePromise = null;
+    throw lastError || new Error("PaddleOCR 组件下载失败");
+  })();
+
+  return paddleModulePromise;
 }
 
 function sortOcrItems(items) {
@@ -96,7 +125,7 @@ function createProgressFetch(onProgress) {
       });
 
       if (onProgress && sumTotal > 0) {
-        const pct = 36 + Math.min(8, Math.round((sumLoaded / sumTotal) * 8));
+        const pct = 36 + Math.min(10, Math.round((sumLoaded / sumTotal) * 10));
         const mb = (sumLoaded / (1024 * 1024)).toFixed(1);
         const totalMb = (sumTotal / (1024 * 1024)).toFixed(0);
         onProgress("正在加载模型 " + mb + "/" + totalMb + "MB...", pct);
@@ -111,16 +140,17 @@ function createProgressFetch(onProgress) {
   };
 }
 
-export async function initEngine(onProgress) {
+async function initEngine(onProgress) {
+  if (cachedEngine) return cachedEngine;
   if (enginePromise) return enginePromise;
 
   enginePromise = (async function () {
-    onProgress && onProgress("正在初始化 PaddleOCR...", 36);
+    const mod = await loadPaddleModule(onProgress);
+    onProgress && onProgress("正在初始化 PaddleOCR 模型...", 38);
 
     const progressFetch = createProgressFetch(onProgress);
-
     const engine = await withTimeout(
-      PaddleOCR.create({
+      mod.PaddleOCR.create({
         lang: "ch",
         ocrVersion: "PP-OCRv5",
         textDetectionModelName: "PP-OCRv5_mobile_det",
@@ -141,7 +171,8 @@ export async function initEngine(onProgress) {
       "PaddleOCR 加载超时"
     );
 
-    onProgress && onProgress("PaddleOCR 就绪", 44);
+    cachedEngine = engine;
+    onProgress && onProgress("PaddleOCR 就绪", 46);
     return engine;
   })().catch(function (err) {
     enginePromise = null;
@@ -151,7 +182,7 @@ export async function initEngine(onProgress) {
   return enginePromise;
 }
 
-export async function recognizeSource(source) {
+async function recognizeSource(source) {
   const engine = await initEngine();
   const results = await engine.predict(source);
   const items = (results[0] && results[0].items) || [];
@@ -161,13 +192,14 @@ export async function recognizeSource(source) {
   };
 }
 
-export async function recognizeDataUrl(dataUrl) {
+async function recognizeDataUrl(dataUrl) {
   const response = await fetch(dataUrl);
   const blob = await response.blob();
   return recognizeSource(blob);
 }
 
 window.LotteryOcrEngine = {
+  ready: true,
   initEngine: initEngine,
   recognizeSource: recognizeSource,
   recognizeDataUrl: recognizeDataUrl,

@@ -4,8 +4,13 @@
   let ocrEngineReady = null;
 
   async function ensureOcrEngineModule() {
-    for (let i = 0; i < 80; i += 1) {
-      if (global.LotteryOcrEngine) return global.LotteryOcrEngine;
+    for (let i = 0; i < 300; i += 1) {
+      if (
+        global.LotteryOcrEngine &&
+        typeof global.LotteryOcrEngine.initEngine === "function"
+      ) {
+        return global.LotteryOcrEngine;
+      }
       await new Promise(function (resolve) {
         setTimeout(resolve, 100);
       });
