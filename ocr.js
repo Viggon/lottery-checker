@@ -264,7 +264,10 @@
 
   function buildSsqFromTokens(tokens, blue) {
     const reds = solveRedsFromTokens(tokens);
-    if (reds) return reds.join(" ") + " + " + blue;
+    if (reds) {
+      const line = finalizeSsqLine(reds, blue);
+      if (line) return line;
+    }
 
     if (/^[1-5]\d{2}$/.test(String(tokens[0] || "").replace(/\D/g, ""))) {
       const tail = tokens.slice(1);
@@ -275,9 +278,8 @@
       });
       if (nums.length === 5 && nums[0] === "04") {
         const recovered = ["03"].concat(nums);
-        if (isValidSsqReds(recovered)) {
-          return recovered.join(" ") + " + " + blue;
-        }
+        const line = finalizeSsqLine(recovered, blue);
+        if (line) return line;
       }
     }
 
@@ -416,9 +418,8 @@
         });
         if (reds.length >= 6 && blues.length >= 1) {
           const red6 = reds.slice(0, 6);
-          if (isValidSsqReds(red6)) {
-            return red6.join(" ") + " + " + blues[0];
-          }
+          const line = finalizeSsqLine(red6, blues[0]);
+          if (line) return line;
         }
       }
     }
@@ -427,9 +428,8 @@
     for (let start = 0; start <= nums.length - 7; start += 1) {
       const reds = nums.slice(start, start + 6);
       const blue = nums[start + 6];
-      if (isValidSsqReds(reds) && inRange(blue, 1, 16)) {
-        return reds.join(" ") + " + " + blue;
-      }
+      const line = finalizeSsqLine(reds, blue);
+      if (line) return line;
     }
     return null;
   }
@@ -442,8 +442,9 @@
     while (index <= nums.length - 7) {
       const reds = nums.slice(index, index + 6);
       const blue = nums[index + 6];
-      if (isValidSsqReds(reds) && inRange(blue, 1, 16)) {
-        lines.push(reds.join(" ") + " + " + blue);
+      const line = finalizeSsqLine(reds, blue);
+      if (line) {
+        lines.push(line);
         index += 7;
       } else {
         index += 1;
@@ -499,9 +500,18 @@
           return inRange(n, 1, 33);
         }));
 
-        if (!isValidSsqReds(reds)) continue;
+        if (!isValidSsqReds(reds)) {
+          const recovered = recoverSsqRedsWithOcrFix(reds);
+          if (!recovered) continue;
+          reds.length = 0;
+          recovered.forEach(function (n) {
+            reds.push(n);
+          });
+        }
+        const fixedBlue = recoverSsqBlueWithOcrFix(blue);
+        if (!fixedBlue) continue;
         return {
-          line: reds.join(" ") + " + " + blue,
+          line: reds.join(" ") + " + " + fixedBlue,
           nextIndex: start + blueIndex + 1,
         };
       }
@@ -927,7 +937,7 @@
     return base;
   }
 
-  function preprocessImage(file, report) {
+  function preprocessImage(file, report, lotteryType) {
     return new Promise(function (resolve, reject) {
       const reader = new FileReader();
       reader.onerror = function () {
@@ -941,7 +951,7 @@
           prepareTicketCanvas(img, report)
             .then(function (base) {
               report(34, "预处理完成");
-              resolve(buildPreprocessVariantsFromCanvas(base));
+              resolve(buildPreprocessVariantsFromCanvas(base, lotteryType));
             })
             .catch(reject);
         };
@@ -956,6 +966,397 @@
 
   function canvasToDataUrl(canvas) {
     return canvas.toDataURL("image/jpeg", 0.92);
+  }
+
+  function cropCanvasRegion(source, sx, sy, sw, sh) {
+    const width = Math.max(1, Math.round(sw));
+    const height = Math.max(1, Math.round(sh));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.getContext("2d").drawImage(source, sx, sy, sw, sh, 0, 0, width, height);
+    return canvas;
+  }
+
+  function scaleCanvas(source, factor) {
+    const width = Math.max(1, Math.round(source.width * factor));
+    const height = Math.max(1, Math.round(source.height * factor));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(source, 0, 0, width, height);
+    return canvas;
+  }
+
+  function isSsqRedBallPixel(r, g, b) {
+    return r > 90 && r - g > 28 && r - b > 28 && g < 145 && b < 145;
+  }
+
+  function isSsqBlueBallPixel(r, g, b) {
+    return b > 75 && b - r > 18 && b - g > 8 && r < 130 && g < 160;
+  }
+
+  function findBallClusters(canvas, isBallPixel, opts) {
+    opts = opts || {};
+    const minArea = opts.minArea || 55;
+    const maxArea = opts.maxArea || 14000;
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width;
+    const h = canvas.height;
+    const pixels = ctx.getImageData(0, 0, w, h).data;
+    const seen = new Uint8Array(w * h);
+    const clusters = [];
+
+    function idx(x, y) {
+      return y * w + x;
+    }
+
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        const id = idx(x, y);
+        if (seen[id]) continue;
+        const pi = id * 4;
+        if (!isBallPixel(pixels[pi], pixels[pi + 1], pixels[pi + 2])) continue;
+
+        let minX = x;
+        let maxX = x;
+        let minY = y;
+        let maxY = y;
+        let area = 0;
+        const stack = [[x, y]];
+        seen[id] = 1;
+
+        while (stack.length) {
+          const point = stack.pop();
+          const cx = point[0];
+          const cy = point[1];
+          area += 1;
+          if (cx < minX) minX = cx;
+          if (cx > maxX) maxX = cx;
+          if (cy < minY) minY = cy;
+          if (cy > maxY) maxY = cy;
+
+          const neighbors = [
+            [cx + 1, cy],
+            [cx - 1, cy],
+            [cx, cy + 1],
+            [cx, cy - 1],
+          ];
+          for (let n = 0; n < neighbors.length; n += 1) {
+            const nx = neighbors[n][0];
+            const ny = neighbors[n][1];
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            const ni = idx(nx, ny);
+            if (seen[ni]) continue;
+            const npi = ni * 4;
+            if (!isBallPixel(pixels[npi], pixels[npi + 1], pixels[npi + 2])) continue;
+            seen[ni] = 1;
+            stack.push([nx, ny]);
+          }
+        }
+
+        const bw = maxX - minX + 1;
+        const bh = maxY - minY + 1;
+        const aspect = bw / Math.max(1, bh);
+        if (
+          area >= minArea &&
+          area <= maxArea &&
+          bw >= 6 &&
+          bh >= 6 &&
+          aspect >= 0.4 &&
+          aspect <= 2.4
+        ) {
+          clusters.push({
+            minX: minX,
+            minY: minY,
+            maxX: maxX,
+            maxY: maxY,
+            cx: (minX + maxX) / 2,
+            cy: (minY + maxY) / 2,
+            area: area,
+          });
+        }
+      }
+    }
+
+    return clusters;
+  }
+
+  function dedupeNearbyClusters(clusters, minDist) {
+    const sorted = clusters.slice().sort(function (a, b) {
+      return a.cx - b.cx || a.cy - b.cy;
+    });
+    const out = [];
+    sorted.forEach(function (cluster) {
+      const dup = out.find(function (existing) {
+        return Math.hypot(existing.cx - cluster.cx, existing.cy - cluster.cy) < minDist;
+      });
+      if (!dup || cluster.area > dup.area) {
+        if (dup) {
+          const index = out.indexOf(dup);
+          out[index] = cluster;
+        } else {
+          out.push(cluster);
+        }
+      }
+    });
+    return out;
+  }
+
+  function groupSsqBetRows(redClusters, blueClusters) {
+    if (!redClusters.length) return [];
+
+    const sorted = redClusters.slice().sort(function (a, b) {
+      return a.cy - b.cy || a.cx - b.cx;
+    });
+    const rows = [];
+    let current = [sorted[0]];
+    let rowCy = sorted[0].cy;
+
+    for (let i = 1; i < sorted.length; i += 1) {
+      const cluster = sorted[i];
+      const avgH =
+        current.reduce(function (sum, item) {
+          return sum + (item.maxY - item.minY + 1);
+        }, 0) / current.length;
+      if (Math.abs(cluster.cy - rowCy) <= Math.max(12, avgH * 0.75)) {
+        current.push(cluster);
+        rowCy =
+          current.reduce(function (sum, item) {
+            return sum + item.cy;
+          }, 0) / current.length;
+      } else {
+        rows.push(current);
+        current = [cluster];
+        rowCy = cluster.cy;
+      }
+    }
+    rows.push(current);
+
+    return rows
+      .map(function (reds) {
+        reds.sort(function (a, b) {
+          return a.cx - b.cx;
+        });
+        reds = dedupeNearbyClusters(
+          reds,
+          Math.max(8, (reds[0].maxX - reds[0].minX + 1) * 0.75)
+        );
+        if (reds.length < 4) return null;
+
+        const rowCy =
+          reds.reduce(function (sum, item) {
+            return sum + item.cy;
+          }, 0) / reds.length;
+        const rowH =
+          reds.reduce(function (sum, item) {
+            return sum + (item.maxY - item.minY + 1);
+          }, 0) / reds.length;
+        let blue = null;
+        let bestScore = Infinity;
+
+        blueClusters.forEach(function (candidate) {
+          const dy = Math.abs(candidate.cy - rowCy);
+          const dx = candidate.cx - reds[reds.length - 1].cx;
+          if (dy > rowH * 1.1) return;
+          const score = dy * 4 + Math.max(0, 20 - dx) * 0.15;
+          if (score < bestScore) {
+            bestScore = score;
+            blue = candidate;
+          }
+        });
+
+        return { reds: reds, blue: blue };
+      })
+      .filter(Boolean);
+  }
+
+  function cropSsqBetRowStrip(source, row, padFactor) {
+    const balls = row.reds.slice();
+    if (row.blue) balls.push(row.blue);
+    const pad = Math.max(
+      6,
+      Math.round(
+        (balls.reduce(function (sum, ball) {
+          return sum + (ball.maxX - ball.minX + 1);
+        }, 0) /
+          balls.length) *
+          (padFactor || 0.35)
+      )
+    );
+
+    let minX = balls[0].minX;
+    let maxX = balls[0].maxX;
+    let minY = balls[0].minY;
+    let maxY = balls[0].maxY;
+    balls.forEach(function (ball) {
+      minX = Math.min(minX, ball.minX);
+      maxX = Math.max(maxX, ball.maxX);
+      minY = Math.min(minY, ball.minY);
+      maxY = Math.max(maxY, ball.maxY);
+    });
+
+    minX = Math.max(0, minX - pad);
+    minY = Math.max(0, minY - pad);
+    maxX = Math.min(source.width - 1, maxX + pad);
+    maxY = Math.min(source.height - 1, maxY + pad);
+
+    const crop = cropCanvasRegion(source, minX, minY, maxX - minX + 1, maxY - minY + 1);
+    return scaleCanvas(crop, 2.4);
+  }
+
+  function extractSsqRowStripsFromCanvas(base) {
+    const top = Math.round(base.height * 0.2);
+    const height = Math.round(base.height * 0.72);
+    const zone = cropCanvasRegion(base, 0, top, base.width, height);
+    const scale = zone.width < 900 ? 900 / zone.width : 1;
+    const work = scale > 1 ? scaleCanvas(zone, scale) : zone;
+
+    const redClusters = dedupeNearbyClusters(
+      findBallClusters(work, isSsqRedBallPixel, { minArea: 50, maxArea: 16000 }),
+      10
+    );
+    const blueClusters = dedupeNearbyClusters(
+      findBallClusters(work, isSsqBlueBallPixel, { minArea: 40, maxArea: 12000 }),
+      10
+    );
+    const rows = groupSsqBetRows(redClusters, blueClusters);
+
+    return rows
+      .map(function (row, index) {
+        const canvas = cropSsqBetRowStrip(work, row);
+        return {
+          id: "ssq-row-" + index,
+          dataUrl: canvasToDataUrl(canvas),
+          canvas: canvas,
+        };
+      })
+      .filter(function (item) {
+        return item.canvas.width >= 80 && item.canvas.height >= 18;
+      });
+  }
+
+  function cropSsqNumberZone(base) {
+    const top = Math.round(base.height * 0.22);
+    const height = Math.round(base.height * 0.68);
+    return cropCanvasRegion(base, 0, top, base.width, height);
+  }
+
+  const SSQ_DIGIT_CONFUSIONS = {
+    "0": ["8", "6", "9"],
+    "1": ["7", "4"],
+    "2": ["7"],
+    "3": ["8", "5", "9"],
+    "5": ["6", "9"],
+    "6": ["8", "5", "0"],
+    "7": ["1", "2"],
+    "8": ["3", "6", "0", "9"],
+    "9": ["8", "4"],
+  };
+
+  function ssqDigitCandidates(num, maxRange) {
+    const raw = normalize2(num);
+    const out = [raw];
+    const chars = raw.split("");
+    if (chars.length !== 2) return out;
+
+    for (let i = 0; i < chars.length; i += 1) {
+      const alts = SSQ_DIGIT_CONFUSIONS[chars[i]] || [];
+      for (let j = 0; j < alts.length; j += 1) {
+        const next = chars.slice();
+        next[i] = alts[j];
+        const candidate = normalize2(next.join(""));
+        if (inRange(candidate, 1, maxRange) && out.indexOf(candidate) === -1) {
+          out.push(candidate);
+        }
+      }
+    }
+    return out;
+  }
+
+  function recoverSsqRedsWithOcrFix(reds) {
+    if (reds.length !== 6) return null;
+    if (isValidSsqReds(reds)) return reds.slice();
+
+    const options = reds.map(function (num) {
+      return ssqDigitCandidates(num, 33);
+    });
+
+    function dfs(idx, path) {
+      if (idx === 6) {
+        return isValidSsqReds(path) ? path.slice() : null;
+      }
+      const choices = options[idx];
+      for (let i = 0; i < choices.length; i += 1) {
+        const n = choices[i];
+        if (path.length && parseInt(n, 10) <= parseInt(path[path.length - 1], 10)) continue;
+        if (path.indexOf(n) !== -1) continue;
+        path.push(n);
+        const found = dfs(idx + 1, path);
+        if (found) return found;
+        path.pop();
+      }
+      return null;
+    }
+
+    return dfs(0, []);
+  }
+
+  function recoverSsqBlueWithOcrFix(blue) {
+    if (!blue) return null;
+    const candidates = ssqDigitCandidates(blue, 16);
+    for (let i = 0; i < candidates.length; i += 1) {
+      if (inRange(candidates[i], 1, 16)) return candidates[i];
+    }
+    return inRange(blue, 1, 16) ? normalize2(blue) : null;
+  }
+
+  function finalizeSsqLine(reds, blue) {
+    const fixedReds = recoverSsqRedsWithOcrFix(reds.map(normalize2));
+    const fixedBlue = recoverSsqBlueWithOcrFix(blue);
+    if (!fixedReds || !fixedBlue) return null;
+    return fixedReds.join(" ") + " + " + fixedBlue;
+  }
+
+  function mergeSsqLineSources(stripLines, ocrLines, stripVotes, ocrVotes) {
+    const ordered = [];
+    const seen = new Set();
+
+    function addLine(line, score) {
+      if (!line || seen.has(line)) return;
+      seen.add(line);
+      ordered.push({ line: line, score: score });
+    }
+
+    stripLines.forEach(function (line) {
+      addLine(line, (stripVotes[line] || 0) + 4);
+    });
+    ocrLines.forEach(function (line) {
+      addLine(line, (ocrVotes[line] || 0) + (stripVotes[line] ? 2 : 0));
+    });
+
+    return ordered
+      .sort(function (a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        return stripLines.indexOf(a.line) - stripLines.indexOf(b.line);
+      })
+      .slice(0, 5)
+      .map(function (item) {
+        return item.line;
+      })
+      .sort(function (a, b) {
+        const ai = stripLines.indexOf(a);
+        const bi = stripLines.indexOf(b);
+        if (ai !== -1 && bi !== -1) return ai - bi;
+        if (ai !== -1) return -1;
+        if (bi !== -1) return 1;
+        return ocrLines.indexOf(a) - ocrLines.indexOf(b);
+      });
   }
 
   function applyContrastEnhancement(imageData) {
@@ -1021,7 +1422,7 @@
     return canvas;
   }
 
-  function buildPreprocessVariantsFromCanvas(base) {
+  function buildPreprocessVariantsFromCanvas(base, lotteryType) {
     const width = base.width;
     const height = base.height;
 
@@ -1043,15 +1444,43 @@
       return { id: spec.id, dataUrl: canvasToDataUrl(canvas) };
     });
 
+    if (lotteryType === "ssq") {
+      const zone = cropSsqNumberZone(base);
+      const zone2x = scaleCanvas(zone, 2);
+      variants.unshift(
+        {
+          id: "ssq-zone-adaptive",
+          dataUrl: canvasToDataUrl(
+            renderVariant(zone2x, 0, 0, zone2x.width, zone2x.height, "adaptive")
+          ),
+        },
+        {
+          id: "ssq-zone-contrast",
+          dataUrl: canvasToDataUrl(
+            renderVariant(zone2x, 0, 0, zone2x.width, zone2x.height, "contrast")
+          ),
+        }
+      );
+    }
+
+    const ssqStrips =
+      lotteryType === "ssq"
+        ? extractSsqRowStripsFromCanvas(base).map(function (strip) {
+            return { id: strip.id, dataUrl: strip.dataUrl };
+          })
+        : [];
+
     return {
       previewUrl: canvasToDataUrl(base),
       variants: variants,
+      ssqStrips: ssqStrips,
     };
   }
 
   const OCR_PSM_MODES = ["6", "11", "13"];
+  const SSQ_OCR_PSM_MODES = ["7", "6", "13"];
 
-  function mergeParsedLines(texts, lotteryType) {
+  function collectParsedLineVotes(texts, lotteryType) {
     const votes = {};
     const firstSeen = {};
 
@@ -1067,14 +1496,14 @@
     });
 
     const lines = Object.keys(firstSeen);
-    if (!lines.length) return [];
+    if (!lines.length) return { lines: [], votes: votes };
 
     lines.sort(function (a, b) {
       return firstSeen[a] - firstSeen[b];
     });
 
     if (lotteryType === "ssq" && lines.length > 5) {
-      return lines
+      const top = lines
         .slice()
         .sort(function (a, b) {
           const voteDiff = (votes[b] || 0) - (votes[a] || 0);
@@ -1085,9 +1514,14 @@
         .sort(function (a, b) {
           return firstSeen[a] - firstSeen[b];
         });
+      return { lines: top, votes: votes };
     }
 
-    return lines;
+    return { lines: lines, votes: votes };
+  }
+
+  function mergeParsedLines(texts, lotteryType) {
+    return collectParsedLineVotes(texts, lotteryType).lines;
   }
 
   function makeProgressReporter(onProgress) {
@@ -1097,20 +1531,21 @@
     };
   }
 
-  async function runMultiPassOcr(Tesseract, variants, onPass) {
+  async function runMultiPassOcr(Tesseract, variants, onPass, lotteryType) {
     const worker = await Tesseract.createWorker("eng");
     await worker.setParameters({
       tessedit_char_whitelist: "0123456789 +|.,:选 ",
     });
 
     const texts = [];
-    const total = variants.length * OCR_PSM_MODES.length;
+    const psmModes = lotteryType === "ssq" ? SSQ_OCR_PSM_MODES : OCR_PSM_MODES;
+    const total = variants.length * psmModes.length;
     let done = 0;
 
     for (let v = 0; v < variants.length; v += 1) {
-      for (let p = 0; p < OCR_PSM_MODES.length; p += 1) {
+      for (let p = 0; p < psmModes.length; p += 1) {
         await worker.setParameters({
-          tessedit_pageseg_mode: OCR_PSM_MODES[p],
+          tessedit_pageseg_mode: psmModes[p],
         });
         const result = await worker.recognize(variants[v].dataUrl);
         texts.push(result.data.text || "");
@@ -1123,22 +1558,69 @@
     return texts;
   }
 
+  async function runSsqStripOcr(Tesseract, strips, onPass) {
+    if (!strips.length) return { lines: [], votes: {} };
+
+    const worker = await Tesseract.createWorker("eng");
+    await worker.setParameters({
+      tessedit_char_whitelist: "0123456789 +|.,",
+      tessedit_pageseg_mode: "7",
+    });
+
+    const votes = {};
+    const firstSeen = {};
+
+    for (let i = 0; i < strips.length; i += 1) {
+      const result = await worker.recognize(strips[i].dataUrl);
+      parseSsqLines(result.data.text || "").forEach(function (line, lineIndex) {
+        votes[line] = (votes[line] || 0) + 3;
+        const position = i * 100 + lineIndex;
+        if (firstSeen[line] == null || position < firstSeen[line]) {
+          firstSeen[line] = position;
+        }
+      });
+      if (onPass) onPass(i + 1, strips.length);
+    }
+
+    await worker.terminate();
+
+    const lines = Object.keys(firstSeen).sort(function (a, b) {
+      return firstSeen[a] - firstSeen[b];
+    });
+
+    return { lines: lines, votes: votes };
+  }
+
   async function recognizeLotteryImage(file, lotteryType, onProgress) {
     if (!file) throw new Error("请先选择或拍摄照片");
     if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
 
     const report = makeProgressReporter(onProgress);
     report(2, "准备识别...");
-    const prepared = await preprocessImage(file, report);
+    const prepared = await preprocessImage(file, report, lotteryType);
 
     report(36, "正在加载 OCR 引擎...");
     const Tesseract = await loadTesseract();
 
+    let stripResult = { lines: [], votes: {} };
+    if (lotteryType === "ssq" && prepared.ssqStrips && prepared.ssqStrips.length) {
+      report(38, "正在识别双色球号码行...");
+      stripResult = await runSsqStripOcr(Tesseract, prepared.ssqStrips, function (done, total) {
+        const percent = 38 + (done / total) * 2;
+        report(percent, "正在识别号码行 " + done + "/" + total);
+      });
+    }
+
     report(40, "正在识别号码...");
-    const ocrTexts = await runMultiPassOcr(Tesseract, prepared.variants, function (done, total) {
-      const percent = 40 + (done / total) * 52;
-      report(percent, "增强识别中 " + done + "/" + total);
-    });
+    const ocrTexts = await runMultiPassOcr(
+      Tesseract,
+      prepared.variants,
+      function (done, total) {
+        const percent = 40 + (done / total) * 52;
+        report(percent, "增强识别中 " + done + "/" + total);
+      },
+      lotteryType
+    );
 
     report(94, "正在整理识别结果...");
 
@@ -1151,7 +1633,17 @@
 
     const detectedType = detectLotteryType(rawText);
     const activeType = detectedType || lotteryType;
-    const lines = mergeParsedLines(ocrTexts, activeType);
+    const ocrResult = collectParsedLineVotes(ocrTexts, activeType);
+    let lines = ocrResult.lines;
+
+    if (lotteryType === "ssq" && stripResult.lines.length) {
+      lines = mergeSsqLineSources(
+        stripResult.lines,
+        ocrResult.lines,
+        stripResult.votes,
+        ocrResult.votes
+      );
+    }
     report(100, "识别完成");
 
     return {
