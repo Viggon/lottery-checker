@@ -1,23 +1,21 @@
 (function (global) {
   "use strict";
 
-  let tesseractPromise = null;
+  let ocrEngineReady = null;
 
-  function loadTesseract() {
-    if (global.Tesseract) return Promise.resolve(global.Tesseract);
-    if (tesseractPromise) return tesseractPromise;
-    tesseractPromise = new Promise(function (resolve, reject) {
-      const script = document.createElement("script");
-      script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-      script.onload = function () {
-        resolve(global.Tesseract);
-      };
-      script.onerror = function () {
-        reject(new Error("OCR 引擎加载失败，请检查网络"));
-      };
-      document.head.appendChild(script);
+  function loadOcrEngine(report) {
+    if (!global.LotteryOcrEngine) {
+      return Promise.reject(new Error("OCR 引擎未加载，请刷新页面"));
+    }
+    if (ocrEngineReady) return ocrEngineReady;
+    ocrEngineReady = global.LotteryOcrEngine.initEngine(function (message, percent) {
+      if (report) report(percent || 36, message);
     });
-    return tesseractPromise;
+    return ocrEngineReady;
+  }
+
+  async function paddleRecognizeDataUrl(dataUrl) {
+    return global.LotteryOcrEngine.recognizeDataUrl(dataUrl);
   }
 
   function normalize2(value) {
@@ -1774,8 +1772,6 @@
     };
   }
 
-  const OCR_PSM_MODES = ["6", "11", "13"];
-  const SSQ_OCR_PSM_MODES = ["7"];
   const SSQ_STRIP_HIT_RATE = 0.4;
 
   function collectParsedLineVotes(texts, lotteryType) {
@@ -1829,48 +1825,26 @@
     };
   }
 
-  async function runMultiPassOcr(Tesseract, variants, onPass, lotteryType) {
-    const worker = await Tesseract.createWorker("eng");
-    await worker.setParameters({
-      tessedit_char_whitelist: "0123456789 +|.,:选 ",
-    });
-
+  async function runMultiPassOcr(variants, onPass) {
     const texts = [];
-    const psmModes = lotteryType === "ssq" ? SSQ_OCR_PSM_MODES : OCR_PSM_MODES;
-    const total = variants.length * psmModes.length;
-    let done = 0;
-
     for (let v = 0; v < variants.length; v += 1) {
-      for (let p = 0; p < psmModes.length; p += 1) {
-        await worker.setParameters({
-          tessedit_pageseg_mode: psmModes[p],
-        });
-        const result = await worker.recognize(variants[v].dataUrl);
-        texts.push(result.data.text || "");
-        done += 1;
-        if (onPass) onPass(done, total);
-      }
+      const result = await paddleRecognizeDataUrl(variants[v].dataUrl);
+      texts.push(result.text || "");
+      if (onPass) onPass(v + 1, variants.length);
+      await yieldToMain();
     }
-
-    await worker.terminate();
     return texts;
   }
 
-  async function runSsqStripOcr(Tesseract, strips, onPass) {
+  async function runSsqStripOcr(strips, onPass) {
     if (!strips.length) return { lines: [], votes: {} };
-
-    const worker = await Tesseract.createWorker("eng");
-    await worker.setParameters({
-      tessedit_char_whitelist: "0123456789 +|.,",
-      tessedit_pageseg_mode: "7",
-    });
 
     const votes = {};
     const firstSeen = {};
 
     for (let i = 0; i < strips.length; i += 1) {
-      const result = await worker.recognize(strips[i].dataUrl);
-      const line = parseSsqStripText(result.data.text || "");
+      const result = await paddleRecognizeDataUrl(strips[i].dataUrl);
+      const line = parseSsqStripText(result.text || "");
       if (line) {
         const weight = strips[i].source === "layout" ? 4 : 3;
         votes[line] = (votes[line] || 0) + weight;
@@ -1880,9 +1854,8 @@
         }
       }
       if (onPass) onPass(i + 1, strips.length);
+      await yieldToMain();
     }
-
-    await worker.terminate();
 
     const lines = Object.keys(firstSeen).sort(function (a, b) {
       return firstSeen[a] - firstSeen[b];
@@ -1899,15 +1872,15 @@
     report(2, "准备识别...");
     const prepared = await preprocessImage(file, report, lotteryType);
 
-    report(36, "正在加载 OCR 引擎...");
-    const Tesseract = await loadTesseract();
+    report(36, "正在加载 PaddleOCR...");
+    await loadOcrEngine(report);
 
     let stripResult = { lines: [], votes: {} };
     let stripRawText = "";
     if (lotteryType === "ssq" && prepared.ssqStrips && prepared.ssqStrips.length) {
-      report(38, "正在按票面排版识别号码...");
-      stripResult = await runSsqStripOcr(Tesseract, prepared.ssqStrips, function (done, total) {
-        const percent = 38 + Math.round((done / total) * 50);
+      report(40, "正在按票面排版识别号码...");
+      stripResult = await runSsqStripOcr(prepared.ssqStrips, function (done, total) {
+        const percent = 40 + Math.round((done / total) * 48);
         report(percent, "正在识别号码行 " + done + "/" + total);
       });
       stripRawText = stripResult.lines.join("\n");
@@ -1926,15 +1899,10 @@
     if (!ssqFastDone) {
       const ocrStart = lotteryType === "ssq" && prepared.ssqStrips.length ? 88 : 40;
       report(ocrStart, lotteryType === "ssq" ? "正在补充识别..." : "正在识别号码...");
-      ocrTexts = await runMultiPassOcr(
-        Tesseract,
-        prepared.variants,
-        function (done, total) {
+      ocrTexts = await runMultiPassOcr(prepared.variants, function (done, total) {
           const percent = ocrStart + (done / total) * (92 - ocrStart);
           report(percent, "增强识别中 " + done + "/" + total);
-        },
-        lotteryType
-      );
+        });
     } else {
       report(92, "排版识别完成...");
     }
