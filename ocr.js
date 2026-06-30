@@ -620,6 +620,8 @@
   }
 
   const OPENCV_LOAD_TIMEOUT_MS = 5000;
+  const MAX_IMAGE_EDGE = 1200;
+  const IMAGE_LOAD_TIMEOUT_MS = 15000;
   const OPENCV_SCRIPT =
     "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.1/dist/opencv.js";
   let openCvPromise = null;
@@ -707,18 +709,91 @@
   }
 
   function createScaledCanvas(img) {
-    const maxWidth = 1800;
-    const scale = Math.min(1, maxWidth / img.width);
-    const width = Math.max(1, Math.round(img.width * scale));
-    const height = Math.max(1, Math.round(img.height * scale));
+    return createScaledCanvasFromSource(img);
+  }
+
+  function createScaledCanvasFromSource(source) {
+    const srcW = source.width;
+    const srcH = source.height;
+    const scale = Math.min(1, MAX_IMAGE_EDGE / srcW, MAX_IMAGE_EDGE / srcH);
+    const width = Math.max(1, Math.round(srcW * scale));
+    const height = Math.max(1, Math.round(srcH * scale));
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, width, height);
-    ctx.drawImage(img, 0, 0, width, height);
+    ctx.drawImage(source, 0, 0, width, height);
     return canvas;
+  }
+
+  function yieldToMain() {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, 0);
+    });
+  }
+
+  function withTimeout(promise, ms, message) {
+    return Promise.race([
+      promise,
+      new Promise(function (_, reject) {
+        setTimeout(function () {
+          reject(new Error(message));
+        }, ms);
+      }),
+    ]);
+  }
+
+  async function loadImageFromFile(file, report) {
+    report(4, "正在读取图片...");
+
+    if (typeof createImageBitmap === "function") {
+      try {
+        const bitmap = await withTimeout(
+          createImageBitmap(file, {
+            resizeWidth: MAX_IMAGE_EDGE,
+            resizeHeight: MAX_IMAGE_EDGE,
+            resizeQuality: "high",
+          }),
+          IMAGE_LOAD_TIMEOUT_MS,
+          "图片读取超时，请换一张较小的照片"
+        );
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        canvas.getContext("2d").drawImage(bitmap, 0, 0);
+        if (typeof bitmap.close === "function") bitmap.close();
+        return canvas;
+      } catch (_) {
+        /* fallback to FileReader */
+      }
+    }
+
+    return new Promise(function (resolve, reject) {
+      const reader = new FileReader();
+      const timeout = setTimeout(function () {
+        reject(new Error("图片读取超时，请换一张较小的照片"));
+      }, IMAGE_LOAD_TIMEOUT_MS);
+
+      reader.onerror = function () {
+        clearTimeout(timeout);
+        reject(new Error("读取图片失败"));
+      };
+      reader.onload = function () {
+        const img = new Image();
+        img.onload = function () {
+          clearTimeout(timeout);
+          resolve(createScaledCanvas(img));
+        };
+        img.onerror = function () {
+          clearTimeout(timeout);
+          reject(new Error("图片格式不支持"));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
   }
 
   function rotateCanvas(source, angleDeg) {
@@ -914,9 +989,13 @@
     return outCanvas;
   }
 
-  async function prepareTicketCanvas(img, report) {
-    let base = createScaledCanvas(img);
+  async function prepareTicketCanvas(source, report) {
+    let base =
+      source.width > MAX_IMAGE_EDGE || source.height > MAX_IMAGE_EDGE
+        ? createScaledCanvasFromSource(source)
+        : source;
     report(10, "正在校正拍摄角度...");
+    await yieldToMain();
     base = deskewCanvas(base);
 
     if (shouldUsePerspectiveCorrection()) {
@@ -937,31 +1016,14 @@
     return base;
   }
 
-  function preprocessImage(file, report, lotteryType) {
-    return new Promise(function (resolve, reject) {
-      const reader = new FileReader();
-      reader.onerror = function () {
-        reject(new Error("读取图片失败"));
-      };
-      reader.onload = function () {
-        report(4, "正在读取图片...");
-        const img = new Image();
-        img.onload = function () {
-          report(6, "正在预处理图片...");
-          prepareTicketCanvas(img, report)
-            .then(function (base) {
-              report(34, "预处理完成");
-              resolve(buildPreprocessVariantsFromCanvas(base, lotteryType));
-            })
-            .catch(reject);
-        };
-        img.onerror = function () {
-          reject(new Error("图片格式不支持"));
-        };
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
+  async function preprocessImage(file, report, lotteryType) {
+    const scaled = await loadImageFromFile(file, report);
+    report(6, "正在预处理图片...");
+    await yieldToMain();
+    const base = await prepareTicketCanvas(scaled, report);
+    report(34, "预处理完成");
+    await yieldToMain();
+    return buildPreprocessVariantsFromCanvas(base, lotteryType);
   }
 
   function canvasToDataUrl(canvas) {
@@ -1655,6 +1717,35 @@
   }
 
   function buildPreprocessVariantsFromCanvas(base, lotteryType) {
+    const ssqStrips =
+      lotteryType === "ssq"
+        ? extractSsqRowStripsFromCanvas(base).map(function (strip) {
+            return {
+              id: strip.id,
+              dataUrl: strip.dataUrl,
+              source: strip.source || "layout",
+            };
+          })
+        : [];
+
+    if (lotteryType === "ssq") {
+      const zone = cropSsqNumberZone(base);
+      const zone2x = scaleCanvas(zone, 2);
+      const variants = [
+        {
+          id: "ssq-zone-contrast",
+          dataUrl: canvasToDataUrl(
+            renderVariant(zone2x, 0, 0, zone2x.width, zone2x.height, "contrast")
+          ),
+        },
+      ];
+      return {
+        previewUrl: canvasToDataUrl(base),
+        variants: variants,
+        ssqStrips: ssqStrips,
+      };
+    }
+
     const width = base.width;
     const height = base.height;
 
@@ -1676,45 +1767,16 @@
       return { id: spec.id, dataUrl: canvasToDataUrl(canvas) };
     });
 
-    if (lotteryType === "ssq") {
-      const zone = cropSsqNumberZone(base);
-      const zone2x = scaleCanvas(zone, 2);
-      variants.unshift(
-        {
-          id: "ssq-zone-adaptive",
-          dataUrl: canvasToDataUrl(
-            renderVariant(zone2x, 0, 0, zone2x.width, zone2x.height, "adaptive")
-          ),
-        },
-        {
-          id: "ssq-zone-contrast",
-          dataUrl: canvasToDataUrl(
-            renderVariant(zone2x, 0, 0, zone2x.width, zone2x.height, "contrast")
-          ),
-        }
-      );
-    }
-
-    const ssqStrips =
-      lotteryType === "ssq"
-        ? extractSsqRowStripsFromCanvas(base).map(function (strip) {
-            return {
-              id: strip.id,
-              dataUrl: strip.dataUrl,
-              source: strip.source || "layout",
-            };
-          })
-        : [];
-
     return {
       previewUrl: canvasToDataUrl(base),
       variants: variants,
-      ssqStrips: ssqStrips,
+      ssqStrips: [],
     };
   }
 
   const OCR_PSM_MODES = ["6", "11", "13"];
-  const SSQ_OCR_PSM_MODES = ["7", "6", "13"];
+  const SSQ_OCR_PSM_MODES = ["7"];
+  const SSQ_STRIP_HIT_RATE = 0.4;
 
   function collectParsedLineVotes(texts, lotteryType) {
     const votes = {};
@@ -1841,40 +1903,59 @@
     const Tesseract = await loadTesseract();
 
     let stripResult = { lines: [], votes: {} };
+    let stripRawText = "";
     if (lotteryType === "ssq" && prepared.ssqStrips && prepared.ssqStrips.length) {
       report(38, "正在按票面排版识别号码...");
       stripResult = await runSsqStripOcr(Tesseract, prepared.ssqStrips, function (done, total) {
-        const percent = 38 + (done / total) * 2;
+        const percent = 38 + Math.round((done / total) * 50);
         report(percent, "正在识别号码行 " + done + "/" + total);
       });
+      stripRawText = stripResult.lines.join("\n");
     }
 
-    report(40, "正在识别号码...");
-    const ocrTexts = await runMultiPassOcr(
-      Tesseract,
-      prepared.variants,
-      function (done, total) {
-        const percent = 40 + (done / total) * 52;
-        report(percent, "增强识别中 " + done + "/" + total);
-      },
-      lotteryType
-    );
+    const stripHitRate =
+      prepared.ssqStrips && prepared.ssqStrips.length
+        ? stripResult.lines.length / prepared.ssqStrips.length
+        : 0;
+    const ssqFastDone =
+      lotteryType === "ssq" &&
+      stripResult.lines.length > 0 &&
+      stripHitRate >= SSQ_STRIP_HIT_RATE;
+
+    let ocrTexts = [];
+    if (!ssqFastDone) {
+      const ocrStart = lotteryType === "ssq" && prepared.ssqStrips.length ? 88 : 40;
+      report(ocrStart, lotteryType === "ssq" ? "正在补充识别..." : "正在识别号码...");
+      ocrTexts = await runMultiPassOcr(
+        Tesseract,
+        prepared.variants,
+        function (done, total) {
+          const percent = ocrStart + (done / total) * (92 - ocrStart);
+          report(percent, "增强识别中 " + done + "/" + total);
+        },
+        lotteryType
+      );
+    } else {
+      report(92, "排版识别完成...");
+    }
 
     report(94, "正在整理识别结果...");
 
-    const rawText = ocrTexts
-      .map(function (text) {
-        return String(text || "").trim();
-      })
+    const rawText = [stripRawText]
+      .concat(
+        ocrTexts.map(function (text) {
+          return String(text || "").trim();
+        })
+      )
       .filter(Boolean)
       .join("\n---\n");
 
     const detectedType = detectLotteryType(rawText);
     const activeType = detectedType || lotteryType;
     const ocrResult = collectParsedLineVotes(ocrTexts, activeType);
-    let lines = ocrResult.lines;
+    let lines = ssqFastDone ? stripResult.lines : ocrResult.lines;
 
-    if (lotteryType === "ssq" && stripResult.lines.length) {
+    if (lotteryType === "ssq" && stripResult.lines.length && !ssqFastDone) {
       lines = mergeSsqLineSources(
         stripResult.lines,
         ocrResult.lines,
