@@ -638,25 +638,24 @@ textarea {
   transition: width 0.25s ease;
 }
 
-.ocr-progress-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 8px;
-}
-
-.ocr-progress-row .status {
-  margin-top: 0;
-  flex: 1;
-}
-
 .ocr-progress-pct {
   flex: 0 0 auto;
+  display: block;
+  margin-top: 8px;
+  text-align: right;
   font-size: 0.82rem;
   font-weight: 800;
   color: var(--lavender);
   font-variant-numeric: tabular-nums;
+}
+
+.ocr-status-line {
+  margin-top: 10px;
+  min-height: 1.4em;
+}
+
+.ocr-status-line.error {
+  color: #e57373;
 }
 
 .ocr-preview-wrap {

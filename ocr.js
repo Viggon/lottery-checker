@@ -2,20 +2,82 @@
   "use strict";
 
   let ocrEngineReady = null;
+  let tesseractPromise = null;
+  let useTesseractFallback = false;
+
+  async function ensureOcrEngineModule() {
+    for (let i = 0; i < 80; i += 1) {
+      if (global.LotteryOcrEngine) return global.LotteryOcrEngine;
+      await new Promise(function (resolve) {
+        setTimeout(resolve, 100);
+      });
+    }
+    throw new Error("OCR 引擎脚本未加载，请刷新页面后重试");
+  }
 
   function loadOcrEngine(report) {
-    if (!global.LotteryOcrEngine) {
-      return Promise.reject(new Error("OCR 引擎未加载，请刷新页面"));
+    if (useTesseractFallback) {
+      return loadTesseract();
     }
     if (ocrEngineReady) return ocrEngineReady;
-    ocrEngineReady = global.LotteryOcrEngine.initEngine(function (message, percent) {
-      if (report) report(percent || 36, message);
-    });
+    ocrEngineReady = ensureOcrEngineModule()
+      .then(function (engineMod) {
+        return engineMod.initEngine(function (message, percent) {
+          if (report) report(percent || 36, message);
+        });
+      })
+      .catch(function (err) {
+        ocrEngineReady = null;
+        throw err;
+      });
     return ocrEngineReady;
   }
 
+  function loadTesseract() {
+    if (global.Tesseract) return Promise.resolve(global.Tesseract);
+    if (tesseractPromise) return tesseractPromise;
+    tesseractPromise = new Promise(function (resolve, reject) {
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+      script.onload = function () {
+        resolve(global.Tesseract);
+      };
+      script.onerror = function () {
+        reject(new Error("备用 OCR 引擎加载失败"));
+      };
+      document.head.appendChild(script);
+    });
+    return tesseractPromise;
+  }
+
   async function paddleRecognizeDataUrl(dataUrl) {
-    return global.LotteryOcrEngine.recognizeDataUrl(dataUrl);
+    const engineMod = await ensureOcrEngineModule();
+    return engineMod.recognizeDataUrl(dataUrl);
+  }
+
+  async function tesseractRecognizeDataUrl(dataUrl) {
+    const Tesseract = await loadTesseract();
+    const worker = await Tesseract.createWorker("eng");
+    await worker.setParameters({
+      tessedit_char_whitelist: "0123456789 +|.,:选 ",
+      tessedit_pageseg_mode: "7",
+    });
+    const result = await worker.recognize(dataUrl);
+    await worker.terminate();
+    return { text: result.data.text || "" };
+  }
+
+  async function recognizeDataUrl(dataUrl) {
+    if (useTesseractFallback) {
+      return tesseractRecognizeDataUrl(dataUrl);
+    }
+    try {
+      return await paddleRecognizeDataUrl(dataUrl);
+    } catch (err) {
+      useTesseractFallback = true;
+      ocrEngineReady = null;
+      return tesseractRecognizeDataUrl(dataUrl);
+    }
   }
 
   function normalize2(value) {
@@ -1021,6 +1083,8 @@
     const base = await prepareTicketCanvas(scaled, report);
     report(34, "预处理完成");
     await yieldToMain();
+    report(35, "正在分析号码区域...");
+    await yieldToMain();
     return buildPreprocessVariantsFromCanvas(base, lotteryType);
   }
 
@@ -1828,7 +1892,7 @@
   async function runMultiPassOcr(variants, onPass) {
     const texts = [];
     for (let v = 0; v < variants.length; v += 1) {
-      const result = await paddleRecognizeDataUrl(variants[v].dataUrl);
+      const result = await recognizeDataUrl(variants[v].dataUrl);
       texts.push(result.text || "");
       if (onPass) onPass(v + 1, variants.length);
       await yieldToMain();
@@ -1843,7 +1907,7 @@
     const firstSeen = {};
 
     for (let i = 0; i < strips.length; i += 1) {
-      const result = await paddleRecognizeDataUrl(strips[i].dataUrl);
+      const result = await recognizeDataUrl(strips[i].dataUrl);
       const line = parseSsqStripText(result.text || "");
       if (line) {
         const weight = strips[i].source === "layout" ? 4 : 3;
@@ -1868,12 +1932,21 @@
     if (!file) throw new Error("请先选择或拍摄照片");
     if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
 
+    useTesseractFallback = false;
+
     const report = makeProgressReporter(onProgress);
     report(2, "准备识别...");
     const prepared = await preprocessImage(file, report, lotteryType);
 
     report(36, "正在加载 PaddleOCR...");
-    await loadOcrEngine(report);
+    try {
+      await loadOcrEngine(report);
+    } catch (err) {
+      useTesseractFallback = true;
+      ocrEngineReady = null;
+      report(36, "PaddleOCR 不可用，改用备用识别...");
+      await loadTesseract();
+    }
 
     let stripResult = { lines: [], votes: {} };
     let stripRawText = "";

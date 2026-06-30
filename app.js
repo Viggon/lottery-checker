@@ -1,4 +1,4 @@
-const APP_VERSION = "1.4.0";
+const APP_VERSION = "1.4.1";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
@@ -445,11 +445,11 @@ function updateOcrProgress(percent) {
 
 function setOcrStatus(text, isError = false, percent) {
   els.ocrStatus.textContent = text;
-  els.ocrStatus.className = isError ? "status error" : "status";
-  if (isError || percent == null) {
-    updateOcrProgress(null);
-  } else {
+  els.ocrStatus.className = isError ? "status ocr-status-line error" : "status ocr-status-line";
+  if (percent != null && percent >= 0) {
     updateOcrProgress(percent);
+  } else {
+    updateOcrProgress(null);
   }
 }
 
@@ -569,7 +569,7 @@ async function handleOcrFile(file) {
     }
 
     if (!result.lines.length) {
-      setOcrStatus("识别完成，但未提取到有效号码。可查看原文或重新拍照。", true);
+      setOcrStatus("识别完成，但未提取到有效号码。可查看原文或重新拍照。", false);
       return;
     }
 
