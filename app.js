@@ -1,4 +1,4 @@
-const APP_VERSION = "1.3.1";
+const APP_VERSION = "1.3.2";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
@@ -320,6 +320,7 @@ const els = {
   accessInfo: document.getElementById("accessInfo"),
   localAccess: document.getElementById("localAccess"),
   cameraInput: document.getElementById("cameraInput"),
+  galleryInput: document.getElementById("galleryInput"),
   ocrPreviewWrap: document.getElementById("ocrPreviewWrap"),
   ocrPreview: document.getElementById("ocrPreview"),
   ocrProgressWrap: document.getElementById("ocrProgressWrap"),
@@ -592,7 +593,8 @@ async function handleOcrFile(file) {
   } catch (err) {
     setOcrStatus(err.message || "识别失败", true);
   } finally {
-    els.cameraInput.value = "";
+    if (els.cameraInput) els.cameraInput.value = "";
+    if (els.galleryInput) els.galleryInput.value = "";
   }
 }
 
@@ -910,6 +912,7 @@ els.lotteryType.addEventListener("change", function () {
 els.refreshBtn.addEventListener("click", fetchDraws);
 els.compareBtn.addEventListener("click", () => compareNumbers());
 els.cameraInput.addEventListener("change", onOcrInputChange);
+els.galleryInput.addEventListener("change", onOcrInputChange);
 
 els.menuBtn.addEventListener("click", openMenu);
 els.menuClose.addEventListener("click", closeMenu);

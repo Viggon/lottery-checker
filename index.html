@@ -60,12 +60,19 @@
           <span class="card-icon">📷</span>
           <h2>拍照识别</h2>
         </div>
-        <p class="hint">对准双色球号码区（红球+蓝球），尽量拍全票面。斜拍会自动校正，识别约需十秒。</p>
-        <label class="scan-btn">
-          <span class="scan-btn-icon" aria-hidden="true"></span>
-          <span class="scan-btn-text">拍摄彩票识别号码</span>
-          <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
-        </label>
+        <p class="hint">对准号码区，尽量拍全票面；也可从相册选已有照片。斜拍会自动校正，识别约需十秒。</p>
+        <div class="scan-actions">
+          <label class="scan-btn">
+            <span class="scan-btn-icon" aria-hidden="true"></span>
+            <span class="scan-btn-text">拍摄彩票识别</span>
+            <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
+          </label>
+          <label class="scan-btn scan-btn-secondary">
+            <span class="scan-btn-icon scan-btn-icon-album" aria-hidden="true"></span>
+            <span class="scan-btn-text">从相册选择</span>
+            <input id="galleryInput" type="file" accept="image/*" hidden />
+          </label>
+        </div>
         <div id="ocrPreviewWrap" class="ocr-preview-wrap hidden">
           <img id="ocrPreview" alt="彩票照片预览" />
         </div>
