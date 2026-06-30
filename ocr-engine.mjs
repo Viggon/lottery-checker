@@ -1,20 +1,11 @@
 import { PaddleOCR } from "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm";
 
-const PADDLE_PKG = "https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2";
-const ORT_WASM = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/";
-const WORKER_URL = PADDLE_PKG + "/dist/assets/worker-entry-C9UNuyOJ.js";
-const INIT_TIMEOUT_MS = 120000;
+const ORT_WASM = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/";
+const MODEL_DET = new URL("./paddle-models/PP-OCRv5_mobile_det_onnx_infer.tar", import.meta.url);
+const MODEL_REC = new URL("./paddle-models/PP-OCRv5_mobile_rec_onnx_infer.tar", import.meta.url);
+const INIT_TIMEOUT_MS = 180000;
 
 let enginePromise = null;
-
-function isMobileDevice() {
-  return (
-    /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent || "") ||
-    (navigator.maxTouchPoints > 0 &&
-      window.matchMedia &&
-      window.matchMedia("(max-width: 768px)").matches)
-  );
-}
 
 function withTimeout(promise, ms, message) {
   return Promise.race([
@@ -29,16 +20,16 @@ function withTimeout(promise, ms, message) {
 
 function formatPaddleError(err) {
   const msg = String((err && err.message) || err || "未知错误");
-  if (/worker|Worker|importScripts|module/i.test(msg)) {
-    return "OCR 引擎在手机上加载失败，请刷新后重试或使用相册选较小照片";
-  }
-  if (/fetch|network|Failed to fetch|Load model/i.test(msg)) {
-    return "OCR 模型下载失败，请检查网络后重试";
+  if (/fetch|network|Failed to fetch|download/i.test(msg)) {
+    return "PaddleOCR 模型加载失败，请刷新页面后重试";
   }
   if (/timeout|超时/i.test(msg)) {
-    return "OCR 模型加载超时，请检查网络后重试";
+    return "PaddleOCR 加载超时，请刷新后重试";
   }
-  return "OCR 引擎加载失败：" + msg;
+  if (/memory|allocation|OOM/i.test(msg)) {
+    return "内存不足，请关闭其他标签页或使用更小的照片";
+  }
+  return "PaddleOCR 加载失败：" + msg;
 }
 
 function sortOcrItems(items) {
@@ -69,77 +60,93 @@ function itemsToText(items) {
     .join("\n");
 }
 
-function buildCreateOptions(useWorker) {
-  const options = {
-    lang: "ch",
-    ocrVersion: "PP-OCRv5",
-    textDetectionModelName: "PP-OCRv5_mobile_det",
-    textRecognitionModelName: "PP-OCRv5_mobile_rec",
-    textDetLimitSideLen: 960,
-    textRecScoreThresh: 0.45,
-    ortOptions: {
-      backend: "wasm",
-      wasmPaths: ORT_WASM,
-    },
+function createProgressFetch(onProgress) {
+  const totals = {};
+  const loaded = {};
+
+  return async function progressFetch(input, init) {
+    const url = String(input);
+    const response = await fetch(input, init);
+    if (!response.ok) {
+      throw new Error("Failed to download " + url + ": HTTP " + String(response.status));
+    }
+
+    const total = Number(response.headers.get("content-length")) || 0;
+    totals[url] = total;
+    loaded[url] = 0;
+
+    if (!response.body || !total) {
+      return response;
+    }
+
+    const reader = response.body.getReader();
+    const chunks = [];
+
+    while (true) {
+      const step = await reader.read();
+      if (step.done) break;
+      chunks.push(step.value);
+      loaded[url] += step.value.length;
+
+      let sumTotal = 0;
+      let sumLoaded = 0;
+      Object.keys(totals).forEach(function (key) {
+        sumTotal += totals[key] || 0;
+        sumLoaded += loaded[key] || 0;
+      });
+
+      if (onProgress && sumTotal > 0) {
+        const pct = 36 + Math.min(8, Math.round((sumLoaded / sumTotal) * 8));
+        const mb = (sumLoaded / (1024 * 1024)).toFixed(1);
+        const totalMb = (sumTotal / (1024 * 1024)).toFixed(0);
+        onProgress("正在加载模型 " + mb + "/" + totalMb + "MB...", pct);
+      }
+    }
+
+    return new Response(new Blob(chunks), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
   };
-
-  if (useWorker) {
-    options.worker = {
-      createWorker: function () {
-        return new Worker(WORKER_URL, { type: "module" });
-      },
-    };
-  } else {
-    options.worker = false;
-  }
-
-  return options;
-}
-
-async function createEngine(useWorker) {
-  return PaddleOCR.create(buildCreateOptions(useWorker));
 }
 
 export async function initEngine(onProgress) {
   if (enginePromise) return enginePromise;
 
   enginePromise = (async function () {
-    onProgress && onProgress("正在加载 PaddleOCR...", 36);
+    onProgress && onProgress("正在初始化 PaddleOCR...", 36);
 
-    const mobile = isMobileDevice();
-    const attempts = mobile ? [false] : [true, false];
+    const progressFetch = createProgressFetch(onProgress);
 
-    let lastError = null;
-    for (let i = 0; i < attempts.length; i += 1) {
-      const useWorker = attempts[i];
-      try {
-        if (i > 0) {
-          onProgress &&
-            onProgress("Worker 不可用，改为主线程加载...", 37);
-        } else if (mobile) {
-          onProgress &&
-            onProgress("正在下载 OCR 模型（首次约需十几秒）...", 36);
-        } else {
-          onProgress &&
-            onProgress("正在下载 OCR 模型（首次较慢）...", 36);
-        }
+    const engine = await withTimeout(
+      PaddleOCR.create({
+        lang: "ch",
+        ocrVersion: "PP-OCRv5",
+        textDetectionModelName: "PP-OCRv5_mobile_det",
+        textDetectionModelDir: { url: MODEL_DET.href },
+        textRecognitionModelName: "PP-OCRv5_mobile_rec",
+        textRecognitionModelDir: { url: MODEL_REC.href },
+        textDetLimitSideLen: 960,
+        textRecScoreThresh: 0.45,
+        worker: false,
+        fetch: progressFetch,
+        ortOptions: {
+          backend: "wasm",
+          wasmPaths: ORT_WASM,
+          numThreads: 1,
+        },
+      }),
+      INIT_TIMEOUT_MS,
+      "PaddleOCR 加载超时"
+    );
 
-        const engine = await withTimeout(
-          createEngine(useWorker),
-          INIT_TIMEOUT_MS,
-          "PaddleOCR 加载超时"
-        );
-        onProgress && onProgress("PaddleOCR 就绪", 38);
-        return engine;
-      } catch (err) {
-        lastError = err;
-        console.warn("PaddleOCR init attempt failed", err);
-      }
-    }
-
+    onProgress && onProgress("PaddleOCR 就绪", 44);
+    return engine;
+  })().catch(function (err) {
     enginePromise = null;
-    throw new Error(formatPaddleError(lastError));
-  })();
+    throw new Error(formatPaddleError(err));
+  });
 
   return enginePromise;
 }
