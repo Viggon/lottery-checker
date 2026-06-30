@@ -1211,6 +1211,9 @@
   }
 
   function extractSsqRowStripsFromCanvas(base) {
+    const layoutStrips = extractSsqLayoutRowStrips(base);
+    if (layoutStrips.length) return layoutStrips;
+
     const top = Math.round(base.height * 0.2);
     const height = Math.round(base.height * 0.72);
     const zone = cropCanvasRegion(base, 0, top, base.width, height);
@@ -1231,9 +1234,10 @@
       .map(function (row, index) {
         const canvas = cropSsqBetRowStrip(work, row);
         return {
-          id: "ssq-row-" + index,
+          id: "ssq-color-row-" + index,
           dataUrl: canvasToDataUrl(canvas),
           canvas: canvas,
+          source: "color",
         };
       })
       .filter(function (item) {
@@ -1242,9 +1246,237 @@
   }
 
   function cropSsqNumberZone(base) {
-    const top = Math.round(base.height * 0.22);
-    const height = Math.round(base.height * 0.68);
-    return cropCanvasRegion(base, 0, top, base.width, height);
+    const bounds = findSsqNumberZoneBounds(base);
+    return cropCanvasRegion(
+      base,
+      bounds.left,
+      bounds.top,
+      bounds.right - bounds.left,
+      bounds.bottom - bounds.top
+    );
+  }
+
+  const SSQ_LAYOUT = {
+    fallbackTop: 0.36,
+    fallbackBottom: 0.74,
+    fallbackLeft: 0.08,
+    fallbackRight: 0.97,
+    defaultRows: 5,
+    stripScale: 2.6,
+  };
+
+  function rowTextScore(canvas, yStart, yEnd, xStart, xEnd) {
+    const w = canvas.width;
+    const pixels = canvas.getContext("2d").getImageData(0, 0, w, canvas.height).data;
+    let darkCount = 0;
+    let edges = 0;
+    let prevDark = false;
+
+    for (let y = yStart; y < yEnd; y += 1) {
+      prevDark = false;
+      for (let x = xStart; x < xEnd; x += 1) {
+        const idx = (y * w + x) * 4;
+        const gray =
+          0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+        const dark = gray < 155;
+        if (dark) darkCount += 1;
+        if (dark !== prevDark) edges += 1;
+        prevDark = dark;
+      }
+    }
+
+    return darkCount + edges * 0.35;
+  }
+
+  function smoothRowScores(scores, radius) {
+    const out = new Float32Array(scores.length);
+    for (let y = 0; y < scores.length; y += 1) {
+      let sum = 0;
+      let count = 0;
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        const ny = y + dy;
+        if (ny >= 0 && ny < scores.length) {
+          sum += scores[ny];
+          count += 1;
+        }
+      }
+      out[y] = sum / count;
+    }
+    return out;
+  }
+
+  function findSsqNumberZoneBounds(canvas) {
+    const w = canvas.width;
+    const h = canvas.height;
+    const xStart = Math.round(w * 0.04);
+    const xEnd = Math.round(w * 0.96);
+    const scanStart = Math.round(h * 0.24);
+    const scanEnd = Math.round(h * 0.82);
+    const scores = new Float32Array(h);
+
+    for (let y = scanStart; y < scanEnd; y += 1) {
+      scores[y] = rowTextScore(canvas, y, y + 1, xStart, xEnd);
+    }
+
+    const smooth = smoothRowScores(scores, 6);
+    const sample = [];
+    for (let y = scanStart; y < scanEnd; y += 1) {
+      sample.push(smooth[y]);
+    }
+    sample.sort(function (a, b) {
+      return a - b;
+    });
+    const threshold = sample[Math.floor(sample.length * 0.42)] || 0;
+
+    let top = Math.round(h * SSQ_LAYOUT.fallbackTop);
+    let bottom = Math.round(h * SSQ_LAYOUT.fallbackBottom);
+
+    for (let y = scanStart; y < scanEnd; y += 1) {
+      if (smooth[y] > threshold * 0.82) {
+        top = y;
+        break;
+      }
+    }
+    for (let y = scanEnd - 1; y >= scanStart; y -= 1) {
+      if (smooth[y] > threshold * 0.82) {
+        bottom = y;
+        break;
+      }
+    }
+
+    if (bottom - top < h * 0.07) {
+      top = Math.round(h * SSQ_LAYOUT.fallbackTop);
+      bottom = Math.round(h * SSQ_LAYOUT.fallbackBottom);
+    }
+
+    return {
+      top: top,
+      bottom: bottom,
+      left: Math.round(w * SSQ_LAYOUT.fallbackLeft),
+      right: Math.round(w * SSQ_LAYOUT.fallbackRight),
+    };
+  }
+
+  function splitSsqRowsInBounds(canvas, bounds) {
+    const zoneHeight = bounds.bottom - bounds.top;
+    const xStart = bounds.left;
+    const xEnd = bounds.right;
+    const scores = new Float32Array(zoneHeight);
+    const rowThreshold = Math.max(12, (xEnd - xStart) * 0.012);
+
+    for (let y = 0; y < zoneHeight; y += 1) {
+      scores[y] = rowTextScore(canvas, bounds.top + y, bounds.top + y + 1, xStart, xEnd);
+    }
+
+    const smooth = smoothRowScores(scores, 4);
+    const rows = [];
+    let inRow = false;
+    let rowStart = 0;
+
+    for (let y = 0; y < zoneHeight; y += 1) {
+      if (smooth[y] > rowThreshold) {
+        if (!inRow) {
+          rowStart = y;
+          inRow = true;
+        }
+      } else if (inRow) {
+        const rowHeight = y - rowStart;
+        if (rowHeight >= zoneHeight * 0.045) {
+          rows.push({ y: rowStart, h: rowHeight });
+        }
+        inRow = false;
+      }
+    }
+
+    if (inRow) {
+      const rowHeight = zoneHeight - rowStart;
+      if (rowHeight >= zoneHeight * 0.045) {
+        rows.push({ y: rowStart, h: rowHeight });
+      }
+    }
+
+    if (rows.length >= 1 && rows.length <= 5) {
+      return rows;
+    }
+
+    const count = SSQ_LAYOUT.defaultRows;
+    const rowH = zoneHeight / count;
+    const equalRows = [];
+    for (let i = 0; i < count; i += 1) {
+      equalRows.push({ y: Math.round(i * rowH), h: Math.round((i + 1) * rowH) - Math.round(i * rowH) });
+    }
+    return equalRows;
+  }
+
+  function prepareSsqStripCanvas(source, sx, sy, sw, sh) {
+    const padY = Math.max(2, Math.round(sh * 0.12));
+    const crop = cropCanvasRegion(
+      source,
+      sx,
+      Math.max(0, sy - padY),
+      sw,
+      sh + padY * 2
+    );
+    const scaled = scaleCanvas(crop, SSQ_LAYOUT.stripScale);
+    return renderVariant(scaled, 0, 0, scaled.width, scaled.height, "adaptive");
+  }
+
+  function extractSsqLayoutRowStrips(base) {
+    const bounds = findSsqNumberZoneBounds(base);
+    const rows = splitSsqRowsInBounds(base, bounds);
+    const zoneWidth = bounds.right - bounds.left;
+
+    return rows
+      .map(function (row, index) {
+        const canvas = prepareSsqStripCanvas(
+          base,
+          bounds.left,
+          bounds.top + row.y,
+          zoneWidth,
+          row.h
+        );
+        return {
+          id: "ssq-layout-row-" + index,
+          dataUrl: canvasToDataUrl(canvas),
+          canvas: canvas,
+          source: "layout",
+        };
+      })
+      .filter(function (item) {
+        return item.canvas.width >= 80 && item.canvas.height >= 16;
+      });
+  }
+
+  function parseSsqStripText(text) {
+    const cleaned = fixOcrText(text, false)
+      .replace(/^[①②③④⑤⑥⑦⑧⑨⑩]\s*/u, "")
+      .replace(/^\d{1,2}\s+(?=\d{2})/, "")
+      .trim();
+    if (!cleaned) return null;
+
+    const plusFixed = cleaned.replace(
+      /(\d{1,2})\s+(\d{1,2})\s*$/,
+      function (match, redTail, maybeBlue) {
+        if (inRange(maybeBlue, 1, 16) && inRange(redTail, 1, 33)) {
+          return redTail + " + " + normalize2(maybeBlue);
+        }
+        return match;
+      }
+    );
+
+    const direct = parseSsqLineFromChunk(plusFixed);
+    if (direct) return direct;
+
+    const withoutPlus = parseSsqLineWithoutPlus(plusFixed);
+    if (withoutPlus) return withoutPlus;
+
+    const nums = extractNumbers(plusFixed.replace(/\+/g, " "));
+    if (nums.length >= 7) {
+      const line = finalizeSsqLine(nums.slice(0, 6), nums[6]);
+      if (line) return line;
+    }
+
+    return null;
   }
 
   const SSQ_DIGIT_CONFUSIONS = {
@@ -1334,7 +1566,7 @@
     }
 
     stripLines.forEach(function (line) {
-      addLine(line, (stripVotes[line] || 0) + 4);
+      addLine(line, (stripVotes[line] || 0) + 5);
     });
     ocrLines.forEach(function (line) {
       addLine(line, (ocrVotes[line] || 0) + (stripVotes[line] ? 2 : 0));
@@ -1466,7 +1698,11 @@
     const ssqStrips =
       lotteryType === "ssq"
         ? extractSsqRowStripsFromCanvas(base).map(function (strip) {
-            return { id: strip.id, dataUrl: strip.dataUrl };
+            return {
+              id: strip.id,
+              dataUrl: strip.dataUrl,
+              source: strip.source || "layout",
+            };
           })
         : [];
 
@@ -1572,13 +1808,15 @@
 
     for (let i = 0; i < strips.length; i += 1) {
       const result = await worker.recognize(strips[i].dataUrl);
-      parseSsqLines(result.data.text || "").forEach(function (line, lineIndex) {
-        votes[line] = (votes[line] || 0) + 3;
-        const position = i * 100 + lineIndex;
+      const line = parseSsqStripText(result.data.text || "");
+      if (line) {
+        const weight = strips[i].source === "layout" ? 4 : 3;
+        votes[line] = (votes[line] || 0) + weight;
+        const position = i * 100;
         if (firstSeen[line] == null || position < firstSeen[line]) {
           firstSeen[line] = position;
         }
-      });
+      }
       if (onPass) onPass(i + 1, strips.length);
     }
 
@@ -1604,7 +1842,7 @@
 
     let stripResult = { lines: [], votes: {} };
     if (lotteryType === "ssq" && prepared.ssqStrips && prepared.ssqStrips.length) {
-      report(38, "正在识别双色球号码行...");
+      report(38, "正在按票面排版识别号码...");
       stripResult = await runSsqStripOcr(Tesseract, prepared.ssqStrips, function (done, total) {
         const percent = 38 + (done / total) * 2;
         report(percent, "正在识别号码行 " + done + "/" + total);
