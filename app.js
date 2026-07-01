@@ -1,4 +1,4 @@
-const APP_VERSION = "1.4.5";
+const APP_VERSION = "1.4.6";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
@@ -321,6 +321,8 @@ const els = {
   localAccess: document.getElementById("localAccess"),
   cameraInput: document.getElementById("cameraInput"),
   galleryInput: document.getElementById("galleryInput"),
+  cameraBtn: document.getElementById("cameraBtn"),
+  galleryBtn: document.getElementById("galleryBtn"),
   ocrPreviewWrap: document.getElementById("ocrPreviewWrap"),
   ocrPreview: document.getElementById("ocrPreview"),
   ocrProgressWrap: document.getElementById("ocrProgressWrap"),
@@ -599,7 +601,23 @@ async function handleOcrFile(file) {
 }
 
 function onOcrInputChange(event) {
-  handleOcrFile(event.target.files && event.target.files[0]);
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  handleOcrFile(file);
+}
+
+function openScanInput(input) {
+  if (!input) return;
+  input.value = "";
+  input.click();
+}
+
+function bindScanButton(button, input) {
+  if (!button || !input) return;
+  button.addEventListener("click", function () {
+    setOcrStatus("请选择照片...", false);
+    openScanInput(input);
+  });
 }
 
 function parseDrawList(payload, type) {
@@ -911,6 +929,8 @@ els.lotteryType.addEventListener("change", function () {
 });
 els.refreshBtn.addEventListener("click", fetchDraws);
 els.compareBtn.addEventListener("click", () => compareNumbers());
+bindScanButton(els.cameraBtn, els.cameraInput);
+bindScanButton(els.galleryBtn, els.galleryInput);
 els.cameraInput.addEventListener("change", onOcrInputChange);
 els.galleryInput.addEventListener("change", onOcrInputChange);
 

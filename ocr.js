@@ -2,8 +2,37 @@
   "use strict";
 
   let ocrEngineReady = null;
+  let paddleBundlePromise = null;
+
+  function loadPaddleBundle() {
+    if (paddleBundlePromise) return paddleBundlePromise;
+    if (
+      global.LotteryOcrEngine &&
+      typeof global.LotteryOcrEngine.initEngine === "function"
+    ) {
+      paddleBundlePromise = Promise.resolve();
+      return paddleBundlePromise;
+    }
+
+    paddleBundlePromise = new Promise(function (resolve, reject) {
+      const script = document.createElement("script");
+      script.type = "module";
+      script.src = "./vendor/paddle-ocr.js";
+      script.onload = function () {
+        resolve();
+      };
+      script.onerror = function () {
+        paddleBundlePromise = null;
+        reject(new Error("OCR 引擎脚本加载失败，请刷新后重试"));
+      };
+      document.head.appendChild(script);
+    });
+
+    return paddleBundlePromise;
+  }
 
   async function ensureOcrEngineModule() {
+    await loadPaddleBundle();
     for (let i = 0; i < 300; i += 1) {
       if (
         global.LotteryOcrEngine &&
