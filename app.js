@@ -1,7 +1,9 @@
-const APP_VERSION = "1.4.8";
+const APP_VERSION = "1.4.9";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
-const FETCH_TIMEOUT_MS = 12000;
+const FETCH_TIMEOUT_MS = 15000;
+const FETCH_RETRY_COUNT = 3;
+const FETCH_RETRY_DELAY_MS = 1200;
 
 const LOTTERY = {
   ssq: {
@@ -523,72 +525,126 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
-async function fetchLocalLotteryCache(type) {
-  const resp = await fetchWithTimeout(
-    "./data/lottery-" + encodeURIComponent(type) + ".json",
-    { cache: "no-store" },
-    5000
-  );
-  if (!resp.ok) throw new Error("本地缓存 HTTP " + String(resp.status));
-  const cached = await resp.json();
-  if (!cached || !cached.data || cached.data.code !== 1) {
-    throw new Error("本地缓存无效");
-  }
-  return {
-    source: cached.source || "本地缓存",
-    data: cached.data,
-    fetchedAt: cached.fetchedAt || "",
-  };
+function sleep(ms) {
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
 }
 
-async function fetchLotteryPayload(type, limit) {
-  const cloudUrl =
+function getLatestRawDraw(data) {
+  const list = data.data?.list || [];
+  if (list.length) return list[0];
+  return data.data?.last || null;
+}
+
+function validateOnlineDraw(type, raw) {
+  if (!raw || !raw.code) return false;
+  const issue = String(raw.code).trim();
+  if (!/^\d{5,8}$/.test(issue)) return false;
+
+  switch (type) {
+    case "ssq":
+      if (raw.red && raw.blue) {
+        return raw.red.split(",").filter(Boolean).length === 6;
+      }
+      return (
+        raw.one &&
+        raw.two &&
+        raw.three &&
+        raw.four &&
+        raw.five &&
+        raw.six &&
+        raw.seven
+      );
+    case "fcsd":
+      if (raw.red) return raw.red.split(",").filter(Boolean).length === 3;
+      return raw.one && raw.two && raw.three;
+    case "qlc":
+      if (raw.red && raw.blue) {
+        return raw.red.split(",").filter(Boolean).length === 7;
+      }
+      return raw.one && raw.eight;
+    case "klb":
+      return raw.one && raw.twenty;
+    default:
+      return false;
+  }
+}
+
+function validateHuiniaoPayload(data, type) {
+  if (!data || data.code !== 1) return false;
+  return validateOnlineDraw(type, getLatestRawDraw(data));
+}
+
+function formatSourceLabel(source) {
+  if (source === "cwl") return "中国福利彩票官网";
+  if (source === "huiniao") return "在线开奖接口";
+  if (source === "公开开奖接口" || source === "在线开奖接口") return source;
+  return source || "在线开奖接口";
+}
+
+async function fetchHuiniaoOnline(type, limit) {
+  const url =
     HUINIAO_API +
     "?type=" +
     encodeURIComponent(type) +
     "&page=1&limit=" +
-    encodeURIComponent(limit);
+    encodeURIComponent(limit) +
+    "&_=" +
+    String(Date.now());
 
-  let cloudErr = null;
-  try {
-    const resp = await fetchWithTimeout(cloudUrl, {}, FETCH_TIMEOUT_MS);
-    const data = await resp.json();
-    if (data.code === 1) {
-      return { source: "公开开奖接口", data: data };
-    }
-    throw new Error(data.info || "开奖接口返回异常");
-  } catch (err) {
-    cloudErr = err;
-  }
-
-  const isLocal =
-    location.hostname === "127.0.0.1" || location.hostname === "localhost";
-  if (isLocal) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= FETCH_RETRY_COUNT; attempt += 1) {
     try {
       const resp = await fetchWithTimeout(
-        `/api/lottery?type=${encodeURIComponent(type)}&limit=${limit}`,
-        {},
+        url,
+        { cache: "no-store", headers: { Accept: "application/json" } },
         FETCH_TIMEOUT_MS
       );
-      const payload = await resp.json();
-      if (!resp.ok || payload.error) throw new Error(payload.error || "请求失败");
-      return payload;
-    } catch (_) {
-      /* fall through to cache */
+      if (!resp.ok) {
+        throw new Error("开奖接口 HTTP " + String(resp.status));
+      }
+      const data = await resp.json();
+      if (!validateHuiniaoPayload(data, type)) {
+        throw new Error(data.info || "在线开奖数据校验失败");
+      }
+      return {
+        source: "在线开奖接口",
+        data: data,
+        fetchedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      lastErr = err;
+      if (attempt < FETCH_RETRY_COUNT) {
+        await sleep(FETCH_RETRY_DELAY_MS * attempt);
+      }
     }
   }
 
-  try {
-    const cached = await fetchLocalLotteryCache(type);
-    return cached;
-  } catch (cacheErr) {
-    if (cloudErr && cloudErr.name === "AbortError") {
-      throw new Error("开奖接口超时，请检查网络后点刷新重试");
-    }
-    throw new Error(
-      (cloudErr && cloudErr.message) || cacheErr.message || "获取开奖数据失败"
-    );
+  if (lastErr && lastErr.name === "AbortError") {
+    throw new Error("在线获取超时，请检查网络后点刷新重试");
   }
+  throw new Error(lastErr?.message || "在线获取开奖数据失败，请稍后重试");
+}
+
+async function fetchLotteryPayload(type, limit) {
+  const isLocal =
+    location.hostname === "127.0.0.1" || location.hostname === "localhost";
+
+  if (isLocal) {
+    const resp = await fetchWithTimeout(
+      `/api/lottery?type=${encodeURIComponent(type)}&limit=${limit}&source=auto`,
+      { cache: "no-store" },
+      FETCH_TIMEOUT_MS
+    );
+    const payload = await resp.json();
+    if (!resp.ok || payload.error) {
+      throw new Error(payload.error || "请求失败");
+    }
+    return Object.assign({ fetchedAt: new Date().toISOString() }, payload);
+  }
+
+  return fetchHuiniaoOnline(type, limit);
 }
 
 function resetOcrSession() {
@@ -674,7 +730,7 @@ function bindScanInputs() {
 
 function parseDrawList(payload, type) {
   const cfg = LOTTERY[type];
-  if (payload.source === "cwl") {
+  if (payload.source === "cwl" || payload.source === "中国福利彩票官网") {
     return (payload.data.result || []).map(cfg.normalizeDraw);
   }
   const list = payload.data?.data?.list || [];
@@ -823,7 +879,7 @@ async function enrichDrawsWithCwlPrizes(type, draws) {
 async function fetchDraws() {
   const type = els.lotteryType.value;
   state.type = type;
-  setStatus("正在获取开奖数据...");
+  setStatus("正在在线获取开奖数据...");
   els.refreshBtn.disabled = true;
 
   try {
@@ -845,7 +901,14 @@ async function fetchDraws() {
     renderDraw(state.currentDraw);
     renderNextDraw();
     startNextDrawTimer();
-    setStatus(`已更新：${LOTTERY[type].name} 第 ${state.currentDraw.issue} 期（数据源：${state.source}）`);
+    const timeLabel = new Date().toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    setStatus(
+      `已在线更新：${LOTTERY[type].name} 第 ${state.currentDraw.issue} 期 · ${formatSourceLabel(state.source)} · ${timeLabel}`
+    );
   } catch (err) {
     els.drawMeta.textContent = "暂无数据";
     els.drawBalls.innerHTML = "";
