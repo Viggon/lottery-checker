@@ -7,6 +7,14 @@
     return path.replace(/\/[^/]+$/, "/");
   }
 
+  function opencvBasePath() {
+    return pageBasePath() + "vendor/opencv/";
+  }
+
+  function opencvScriptUrl() {
+    return opencvBasePath() + "opencv.js";
+  }
+
   function cvReady() {
     return global.cv && global.cv.Mat;
   }
@@ -17,108 +25,125 @@
     }
   }
 
-  function injectScript(src) {
+  function fetchOpenCvSource() {
+    const url = opencvScriptUrl();
+
     return new Promise(function (resolve, reject) {
-      const deadline = Date.now() + 120000;
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url, true);
+      xhr.responseType = "text";
+
+      xhr.onprogress = function (event) {
+        if (!event.lengthComputable) {
+          report("正在下载 OpenCV...", 37);
+          return;
+        }
+        const pct = 36 + Math.min(5, Math.round((event.loaded / event.total) * 5));
+        const mb = (event.loaded / (1024 * 1024)).toFixed(1);
+        const totalMb = (event.total / (1024 * 1024)).toFixed(1);
+        report("正在下载 OpenCV " + mb + "/" + totalMb + "MB...", pct);
+      };
+
+      xhr.onload = function () {
+        if (xhr.status >= 200 && xhr.status < 300 && xhr.responseText) {
+          resolve(xhr.responseText);
+          return;
+        }
+        reject(new Error("OpenCV 下载失败 HTTP " + String(xhr.status)));
+      };
+
+      xhr.onerror = function () {
+        reject(new Error("OpenCV 下载失败，请检查网络"));
+      };
+
+      xhr.ontimeout = function () {
+        reject(new Error("OpenCV 下载超时"));
+      };
+
+      xhr.timeout = 180000;
+      report("正在连接 OpenCV...", 36);
+      xhr.send();
+    });
+  }
+
+  function runOpenCvSource(source) {
+    return new Promise(function (resolve, reject) {
+      let settled = false;
+      const base = opencvBasePath();
+      const previousModule = global.Module || {};
+      const previousCv = global.cv;
 
       function finishOk() {
-        if (!cvReady()) return;
+        if (settled || !cvReady()) return;
+        settled = true;
+        clearInterval(initPoll);
+        clearTimeout(timeout);
+        report("OpenCV 就绪", 42);
         resolve(global.cv);
       }
 
       function finishErr(err) {
+        if (settled) return;
+        settled = true;
+        clearInterval(initPoll);
+        clearTimeout(timeout);
+        global.Module = previousModule;
+        if (previousCv === undefined) {
+          delete global.cv;
+        } else {
+          global.cv = previousCv;
+        }
         reject(err);
       }
 
-      const script = document.createElement("script");
-      script.src = src;
-      script.async = true;
-      script.dataset.lotteryOpencv = "1";
-      script.onload = function () {
+      const timeout = setTimeout(function () {
+        finishErr(
+          new Error("OpenCV 初始化超时（WASM 编译较慢，请换 WiFi 或刷新重试）")
+        );
+      }, 180000);
+
+      let initTicks = 0;
+      const initPoll = setInterval(function () {
+        initTicks += 1;
         finishOk();
-        if (cvReady()) return;
-        if (global.cv && !global.cv.Mat) {
-          global.cv.onRuntimeInitialized = finishOk;
+        if (settled) return;
+        if (initTicks % 4 === 0) {
+          report(
+            "OpenCV WASM 编译中，已等待 " + Math.round(initTicks * 0.5) + " 秒...",
+            41
+          );
         }
-        const poll = setInterval(function () {
+      }, 500);
+
+      const moduleRef = previousCv && previousCv.Mat ? previousCv : {};
+      global.cv = moduleRef;
+      global.Module = Object.assign({}, previousModule, moduleRef, {
+        locateFile: function (path) {
+          return base + path;
+        },
+        onRuntimeInitialized: function () {
           finishOk();
-          if (cvReady()) {
-            clearInterval(poll);
-            return;
-          }
-          if (Date.now() > deadline) {
-            clearInterval(poll);
-            finishErr(new Error("OpenCV 初始化超时"));
-          }
-        }, 200);
-      };
-      script.onerror = function () {
-        finishErr(new Error("OpenCV 脚本执行失败"));
-      };
-      document.head.appendChild(script);
+        },
+      });
+      global.cv = global.Module;
+
+      try {
+        const script = document.createElement("script");
+        script.type = "text/javascript";
+        script.dataset.lotteryOpencv = "1";
+        script.textContent = source;
+        document.head.appendChild(script);
+        finishOk();
+      } catch (err) {
+        finishErr(err instanceof Error ? err : new Error(String(err)));
+      }
     });
   }
 
   async function downloadAndInit() {
-    if (global.__lotteryOpenCvPromise) {
-      return global.__lotteryOpenCvPromise;
-    }
-
-    const url = pageBasePath() + "vendor/opencv/opencv.js";
-    report("正在连接 OpenCV...", 36);
-
-    const resp = await fetch(url, { cache: "no-store" });
-    if (!resp.ok) {
-      throw new Error("OpenCV 下载失败 HTTP " + String(resp.status));
-    }
-
-    const total = Number(resp.headers.get("content-length")) || 0;
-    if (!resp.body) {
-      report("正在下载 OpenCV...", 37);
-      const source = await resp.text();
-      const blobUrl = URL.createObjectURL(
-        new Blob([source], { type: "application/javascript" })
-      );
-      try {
-        report("OpenCV 下载完成，正在初始化...", 41);
-        return await injectScript(blobUrl);
-      } finally {
-        URL.revokeObjectURL(blobUrl);
-      }
-    }
-
-    const reader = resp.body.getReader();
-    const chunks = [];
-    let loaded = 0;
-
-    while (true) {
-      const step = await reader.read();
-      if (step.done) break;
-      chunks.push(step.value);
-      loaded += step.value.length;
-
-      if (total > 0) {
-        const pct = 36 + Math.min(5, Math.round((loaded / total) * 5));
-        const mb = (loaded / (1024 * 1024)).toFixed(1);
-        const totalMb = (total / (1024 * 1024)).toFixed(1);
-        report("正在下载 OpenCV " + mb + "/" + totalMb + "MB...", pct);
-      } else {
-        const mb = (loaded / (1024 * 1024)).toFixed(1);
-        report("正在下载 OpenCV " + mb + "MB...", 37);
-      }
-    }
-
-    report("OpenCV 下载完成，正在初始化...", 41);
-    const blobUrl = URL.createObjectURL(
-      new Blob(chunks, { type: "application/javascript" })
-    );
-    try {
-      const cv = await injectScript(blobUrl);
-      report("OpenCV 就绪", 42);
-      return cv;
-    } finally {
-      URL.revokeObjectURL(blobUrl);
-    }
+    const source = await fetchOpenCvSource();
+    report("OpenCV 下载完成，正在初始化 WASM...", 41);
+    return runOpenCvSource(source);
   }
 
   function loadOpenCv() {
