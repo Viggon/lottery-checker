@@ -1,6 +1,7 @@
-const APP_VERSION = "1.4.7";
+const APP_VERSION = "1.4.8";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
+const FETCH_TIMEOUT_MS = 12000;
 
 const LOTTERY = {
   ssq: {
@@ -509,6 +510,37 @@ async function loadAccessInfo() {
   }
 }
 
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(function () {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, Object.assign({}, options || {}, { signal: controller.signal }));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchLocalLotteryCache(type) {
+  const resp = await fetchWithTimeout(
+    "./data/lottery-" + encodeURIComponent(type) + ".json",
+    { cache: "no-store" },
+    5000
+  );
+  if (!resp.ok) throw new Error("本地缓存 HTTP " + String(resp.status));
+  const cached = await resp.json();
+  if (!cached || !cached.data || cached.data.code !== 1) {
+    throw new Error("本地缓存无效");
+  }
+  return {
+    source: cached.source || "本地缓存",
+    data: cached.data,
+    fetchedAt: cached.fetchedAt || "",
+  };
+}
+
 async function fetchLotteryPayload(type, limit) {
   const cloudUrl =
     HUINIAO_API +
@@ -517,24 +549,45 @@ async function fetchLotteryPayload(type, limit) {
     "&page=1&limit=" +
     encodeURIComponent(limit);
 
+  let cloudErr = null;
   try {
-    const resp = await fetch(cloudUrl);
+    const resp = await fetchWithTimeout(cloudUrl, {}, FETCH_TIMEOUT_MS);
     const data = await resp.json();
     if (data.code === 1) {
       return { source: "公开开奖接口", data: data };
     }
     throw new Error(data.info || "开奖接口返回异常");
-  } catch (cloudErr) {
-    const isLocal =
-      location.hostname === "127.0.0.1" || location.hostname === "localhost";
-    if (!isLocal) throw cloudErr;
+  } catch (err) {
+    cloudErr = err;
+  }
 
-    const resp = await fetch(
-      `/api/lottery?type=${encodeURIComponent(type)}&limit=${limit}`
+  const isLocal =
+    location.hostname === "127.0.0.1" || location.hostname === "localhost";
+  if (isLocal) {
+    try {
+      const resp = await fetchWithTimeout(
+        `/api/lottery?type=${encodeURIComponent(type)}&limit=${limit}`,
+        {},
+        FETCH_TIMEOUT_MS
+      );
+      const payload = await resp.json();
+      if (!resp.ok || payload.error) throw new Error(payload.error || "请求失败");
+      return payload;
+    } catch (_) {
+      /* fall through to cache */
+    }
+  }
+
+  try {
+    const cached = await fetchLocalLotteryCache(type);
+    return cached;
+  } catch (cacheErr) {
+    if (cloudErr && cloudErr.name === "AbortError") {
+      throw new Error("开奖接口超时，请检查网络后点刷新重试");
+    }
+    throw new Error(
+      (cloudErr && cloudErr.message) || cacheErr.message || "获取开奖数据失败"
     );
-    const payload = await resp.json();
-    if (!resp.ok || payload.error) throw new Error(payload.error || "请求失败");
-    return payload;
   }
 }
 
@@ -794,6 +847,8 @@ async function fetchDraws() {
     startNextDrawTimer();
     setStatus(`已更新：${LOTTERY[type].name} 第 ${state.currentDraw.issue} 期（数据源：${state.source}）`);
   } catch (err) {
+    els.drawMeta.textContent = "暂无数据";
+    els.drawBalls.innerHTML = "";
     setStatus(err.message || "获取失败", true);
   } finally {
     els.refreshBtn.disabled = false;
