@@ -3,6 +3,42 @@
 
   let ocrEngineReady = null;
   let paddleBundlePromise = null;
+  let openCvLoaderPromise = null;
+
+  function ensureOpenCvLoader() {
+    if (global.__lotteryOpenCvReady) {
+      return global.__lotteryOpenCvReady;
+    }
+    if (openCvLoaderPromise) {
+      return openCvLoaderPromise;
+    }
+
+    openCvLoaderPromise = new Promise(function (resolve, reject) {
+      if (global.__lotteryOpenCvReady) {
+        global.__lotteryOpenCvReady.then(resolve, reject);
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = "./opencv-loader.js";
+      script.async = true;
+      script.onload = function () {
+        if (!global.__lotteryOpenCvReady) {
+          openCvLoaderPromise = null;
+          reject(new Error("OpenCV 加载器启动失败"));
+          return;
+        }
+        global.__lotteryOpenCvReady.then(resolve, reject);
+      };
+      script.onerror = function () {
+        openCvLoaderPromise = null;
+        reject(new Error("OpenCV 加载器下载失败"));
+      };
+      document.head.appendChild(script);
+    });
+
+    return openCvLoaderPromise;
+  }
 
   function loadPaddleBundle() {
     if (paddleBundlePromise) return paddleBundlePromise;
@@ -32,6 +68,7 @@
   }
 
   async function ensureOcrEngineModule() {
+    await ensureOpenCvLoader();
     await loadPaddleBundle();
     for (let i = 0; i < 300; i += 1) {
       if (
@@ -666,13 +703,8 @@
     }
   }
 
-  const OPENCV_LOAD_TIMEOUT_MS = 5000;
   const MAX_IMAGE_EDGE = 1200;
   const IMAGE_LOAD_TIMEOUT_MS = 15000;
-  const OPENCV_SCRIPT =
-    "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.1/dist/opencv.js";
-  let openCvPromise = null;
-  let openCvScriptEl = null;
 
   function shouldUsePerspectiveCorrection() {
     if (global.cv && global.cv.imread) return true;
@@ -690,70 +722,7 @@
   function loadOpenCV() {
     if (global.cv && global.cv.imread) return Promise.resolve(global.cv);
     if (global.__lotteryOpenCvReady) return global.__lotteryOpenCvReady;
-    if (openCvPromise) return openCvPromise;
-
-    openCvPromise = new Promise(function (resolve, reject) {
-      let settled = false;
-
-      function finishOk() {
-        if (settled) return;
-        if (!global.cv || !global.cv.imread) return;
-        settled = true;
-        clearTimeout(timeout);
-        resolve(global.cv);
-      }
-
-      function finishErr(err) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        openCvPromise = null;
-        if (openCvScriptEl && openCvScriptEl.parentNode) {
-          openCvScriptEl.parentNode.removeChild(openCvScriptEl);
-          openCvScriptEl = null;
-        }
-        reject(err);
-      }
-
-      const timeout = setTimeout(function () {
-        finishErr(new Error("OpenCV 加载超时"));
-      }, OPENCV_LOAD_TIMEOUT_MS);
-
-      const previousModule = global.Module || {};
-      global.Module = Object.assign({}, previousModule, {
-        onRuntimeInitialized: function () {
-          finishOk();
-        },
-      });
-
-      const script = document.createElement("script");
-      script.src = OPENCV_SCRIPT;
-      script.async = true;
-      openCvScriptEl = script;
-      script.onload = function () {
-        finishOk();
-        if (settled) return;
-        let tries = 0;
-        const poll = setInterval(function () {
-          tries += 1;
-          finishOk();
-          if (settled) {
-            clearInterval(poll);
-            return;
-          }
-          if (tries >= 25) {
-            clearInterval(poll);
-            finishErr(new Error("OpenCV 初始化超时"));
-          }
-        }, 200);
-      };
-      script.onerror = function () {
-        finishErr(new Error("OpenCV 加载失败"));
-      };
-      document.head.appendChild(script);
-    });
-
-    return openCvPromise;
+    return ensureOpenCvLoader();
   }
 
   function createScaledCanvas(img) {

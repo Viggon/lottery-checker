@@ -1,4 +1,4 @@
-const APP_VERSION = "1.4.6";
+const APP_VERSION = "1.4.7";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 
@@ -321,8 +321,6 @@ const els = {
   localAccess: document.getElementById("localAccess"),
   cameraInput: document.getElementById("cameraInput"),
   galleryInput: document.getElementById("galleryInput"),
-  cameraBtn: document.getElementById("cameraBtn"),
-  galleryBtn: document.getElementById("galleryBtn"),
   ocrPreviewWrap: document.getElementById("ocrPreviewWrap"),
   ocrPreview: document.getElementById("ocrPreview"),
   ocrProgressWrap: document.getElementById("ocrProgressWrap"),
@@ -606,18 +604,19 @@ function onOcrInputChange(event) {
   handleOcrFile(file);
 }
 
-function openScanInput(input) {
-  if (!input) return;
-  input.value = "";
-  input.click();
-}
+function bindScanInputs() {
+  function onPickStart() {
+    setOcrStatus("正在打开相册或相机...", false);
+  }
 
-function bindScanButton(button, input) {
-  if (!button || !input) return;
-  button.addEventListener("click", function () {
-    setOcrStatus("请选择照片...", false);
-    openScanInput(input);
-  });
+  if (els.cameraInput) {
+    els.cameraInput.addEventListener("click", onPickStart);
+    els.cameraInput.addEventListener("change", onOcrInputChange);
+  }
+  if (els.galleryInput) {
+    els.galleryInput.addEventListener("click", onPickStart);
+    els.galleryInput.addEventListener("change", onOcrInputChange);
+  }
 }
 
 function parseDrawList(payload, type) {
@@ -929,10 +928,7 @@ els.lotteryType.addEventListener("change", function () {
 });
 els.refreshBtn.addEventListener("click", fetchDraws);
 els.compareBtn.addEventListener("click", () => compareNumbers());
-bindScanButton(els.cameraBtn, els.cameraInput);
-bindScanButton(els.galleryBtn, els.galleryInput);
-els.cameraInput.addEventListener("change", onOcrInputChange);
-els.galleryInput.addEventListener("change", onOcrInputChange);
+bindScanInputs();
 
 els.menuBtn.addEventListener("click", openMenu);
 els.menuClose.addEventListener("click", closeMenu);

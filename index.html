@@ -62,16 +62,22 @@
         </div>
         <p class="hint">对准号码区，尽量拍全票面；也可从相册选已有照片。首次加载 PaddleOCR 模型约需十几秒。</p>
         <div class="scan-actions">
-          <button type="button" id="cameraBtn" class="scan-btn">
+          <label class="scan-btn">
+            <input
+              id="cameraInput"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              class="scan-file-overlay"
+            />
             <span class="scan-btn-icon" aria-hidden="true"></span>
             <span class="scan-btn-text">拍摄彩票识别</span>
-          </button>
-          <button type="button" id="galleryBtn" class="scan-btn scan-btn-secondary">
+          </label>
+          <label class="scan-btn scan-btn-secondary">
+            <input id="galleryInput" type="file" accept="image/*" class="scan-file-overlay" />
             <span class="scan-btn-icon scan-btn-icon-album" aria-hidden="true"></span>
             <span class="scan-btn-text">从相册选择</span>
-          </button>
-          <input id="cameraInput" type="file" accept="image/*" capture="environment" class="scan-file-input" tabindex="-1" aria-hidden="true" />
-          <input id="galleryInput" type="file" accept="image/*" class="scan-file-input" tabindex="-1" aria-hidden="true" />
+          </label>
         </div>
         <div id="ocrPreviewWrap" class="ocr-preview-wrap hidden">
           <img id="ocrPreview" alt="彩票照片预览" />
@@ -128,7 +134,6 @@
       </div>
     </div>
 
-    <script src="./opencv-loader.js"></script>
     <script src="./ocr.js"></script>
     <script src="./app.js"></script>
   </body>

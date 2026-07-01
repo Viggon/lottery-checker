@@ -537,22 +537,10 @@ textarea {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-top: 12px;
-  position: relative;
-}
-
-.scan-file-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 
 .scan-btn {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -565,10 +553,27 @@ textarea {
   background: linear-gradient(135deg, #eef8ff, #f3eeff);
   border: 2px dashed rgba(126, 200, 255, 0.45);
   transition: transform 0.15s;
-  font: inherit;
-  color: inherit;
-  -webkit-appearance: none;
-  appearance: none;
+  overflow: hidden;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.scan-file-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 3;
+  font-size: 0;
+}
+
+.scan-btn-icon,
+.scan-btn-text {
+  pointer-events: none;
+  position: relative;
+  z-index: 1;
 }
 
 .scan-btn:active {
