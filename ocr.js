@@ -3,42 +3,6 @@
 
   let ocrEngineReady = null;
   let paddleBundlePromise = null;
-  let openCvLoaderPromise = null;
-
-  function ensureOpenCvLoader() {
-    if (global.__lotteryOpenCvReady) {
-      return global.__lotteryOpenCvReady;
-    }
-    if (openCvLoaderPromise) {
-      return openCvLoaderPromise;
-    }
-
-    openCvLoaderPromise = new Promise(function (resolve, reject) {
-      if (global.__lotteryOpenCvReady) {
-        global.__lotteryOpenCvReady.then(resolve, reject);
-        return;
-      }
-
-      const script = document.createElement("script");
-      script.src = "./opencv-loader.js";
-      script.async = true;
-      script.onload = function () {
-        if (!global.__lotteryOpenCvReady) {
-          openCvLoaderPromise = null;
-          reject(new Error("OpenCV 加载器启动失败"));
-          return;
-        }
-        global.__lotteryOpenCvReady.then(resolve, reject);
-      };
-      script.onerror = function () {
-        openCvLoaderPromise = null;
-        reject(new Error("OpenCV 加载器下载失败"));
-      };
-      document.head.appendChild(script);
-    });
-
-    return openCvLoaderPromise;
-  }
 
   function loadPaddleBundle() {
     if (paddleBundlePromise) return paddleBundlePromise;
@@ -68,7 +32,6 @@
   }
 
   async function ensureOcrEngineModule() {
-    await ensureOpenCvLoader();
     await loadPaddleBundle();
     for (let i = 0; i < 300; i += 1) {
       if (
@@ -722,7 +685,25 @@
   function loadOpenCV() {
     if (global.cv && global.cv.imread) return Promise.resolve(global.cv);
     if (global.__lotteryOpenCvReady) return global.__lotteryOpenCvReady;
-    return ensureOpenCvLoader();
+    if (global.__lotteryOpenCvPromise) return global.__lotteryOpenCvPromise;
+
+    return new Promise(function (resolve, reject) {
+      const script = document.createElement("script");
+      script.src = "./opencv-loader.js";
+      script.async = true;
+      script.onload = function () {
+        const ready = global.__lotteryOpenCvReady || global.__lotteryOpenCvPromise;
+        if (!ready) {
+          reject(new Error("OpenCV 加载器启动失败"));
+          return;
+        }
+        ready.then(resolve, reject);
+      };
+      script.onerror = function () {
+        reject(new Error("OpenCV 加载失败"));
+      };
+      document.head.appendChild(script);
+    });
   }
 
   function createScaledCanvas(img) {

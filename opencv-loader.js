@@ -1,105 +1,73 @@
 (function (global) {
   "use strict";
 
-  var OPENCV_URLS = [
-    "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-release.1/dist/opencv.js",
-    "https://unpkg.com/@techstark/opencv-js@4.9.0-release.1/dist/opencv.js",
-    "https://registry.npmmirror.com/@techstark/opencv-js/4.9.0-release.1/files/dist/opencv.js",
-  ];
+  function pageBasePath() {
+    const path = global.location.pathname || "/";
+    if (path.endsWith("/")) return path;
+    return path.replace(/\/[^/]+$/, "/");
+  }
 
   function cvReady() {
     return global.cv && global.cv.Mat;
   }
 
-  if (cvReady()) {
-    global.__lotteryOpenCvReady = Promise.resolve(global.cv);
-    return;
-  }
-
-  if (global.__lotteryOpenCvReady) {
-    return;
-  }
-
-  global.__lotteryOpenCvReady = new Promise(function (resolve, reject) {
-    var settled = false;
-    var urlIndex = 0;
-
-    function finishOk() {
-      if (settled) return;
-      if (!cvReady()) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolve(global.cv);
+  function loadOpenCv() {
+    if (cvReady()) {
+      return Promise.resolve(global.cv);
+    }
+    if (global.__lotteryOpenCvPromise) {
+      return global.__lotteryOpenCvPromise;
     }
 
-    function finishErr(err) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      global.__lotteryOpenCvReady = null;
-      reject(err);
-    }
+    global.__lotteryOpenCvPromise = new Promise(function (resolve, reject) {
+      const deadline = Date.now() + 120000;
 
-    var timeout = setTimeout(function () {
-      finishErr(new Error("OpenCV 加载超时"));
-    }, 120000);
-
-    function waitForExistingScript() {
-      var tries = 0;
-      var poll = setInterval(function () {
-        tries += 1;
-        finishOk();
-        if (settled) {
-          clearInterval(poll);
-          return;
-        }
-        if (tries >= 600) {
-          clearInterval(poll);
-          tryNextUrl(new Error("OpenCV 初始化超时"));
-        }
-      }, 200);
-    }
-
-    function tryNextUrl(lastError) {
-      if (urlIndex >= OPENCV_URLS.length) {
-        finishErr(lastError || new Error("OpenCV 加载失败"));
-        return;
+      function finishOk() {
+        if (!cvReady()) return;
+        clearTimeout(timeout);
+        resolve(global.cv);
       }
 
-      var url = OPENCV_URLS[urlIndex];
-      urlIndex += 1;
+      function finishErr(err) {
+        clearTimeout(timeout);
+        global.__lotteryOpenCvPromise = null;
+        reject(err);
+      }
 
-      var previousModule = global.Module || {};
-      global.Module = Object.assign({}, previousModule, {
-        onRuntimeInitialized: function () {
-          finishOk();
-        },
-      });
+      const timeout = setTimeout(function () {
+        finishErr(new Error("OpenCV 加载超时"));
+      }, 120000);
 
-      var script = document.createElement("script");
-      script.src = url;
+      const script = document.createElement("script");
+      script.src = pageBasePath() + "vendor/opencv/opencv.js";
       script.async = true;
       script.dataset.lotteryOpencv = "1";
       script.onload = function () {
         finishOk();
-        if (settled) return;
-        waitForExistingScript();
+        if (cvReady()) return;
+        if (global.cv && !global.cv.Mat) {
+          global.cv.onRuntimeInitialized = finishOk;
+        }
+        const poll = setInterval(function () {
+          finishOk();
+          if (cvReady()) {
+            clearInterval(poll);
+            return;
+          }
+          if (Date.now() > deadline) {
+            clearInterval(poll);
+            finishErr(new Error("OpenCV 初始化超时"));
+          }
+        }, 200);
       };
       script.onerror = function () {
-        if (script.parentNode) {
-          script.parentNode.removeChild(script);
-        }
-        tryNextUrl(new Error("OpenCV 加载失败"));
+        finishErr(new Error("OpenCV 加载失败"));
       };
       document.head.appendChild(script);
-    }
+    });
 
-    var existing = document.querySelector('script[data-lottery-opencv="1"]');
-    if (existing) {
-      waitForExistingScript();
-      return;
-    }
+    return global.__lotteryOpenCvPromise;
+  }
 
-    tryNextUrl(null);
-  });
+  global.__lotteryOpenCvReady = loadOpenCv();
 })(window);
