@@ -49,6 +49,11 @@
 
   function loadOcrEngine(report) {
     if (ocrEngineReady) return ocrEngineReady;
+    global.__lotteryOpenCvOnProgress = report
+      ? function (message, percent) {
+          report(percent || 36, message);
+        }
+      : null;
     ocrEngineReady = ensureOcrEngineModule()
       .then(function (engineMod) {
         return engineMod.initEngine(function (message, percent) {
@@ -58,6 +63,9 @@
       .catch(function (err) {
         ocrEngineReady = null;
         throw err;
+      })
+      .finally(function () {
+        global.__lotteryOpenCvOnProgress = null;
       });
     return ocrEngineReady;
   }
