@@ -692,7 +692,6 @@
 
   function loadOpenCV() {
     if (global.cv && global.cv.imread) return Promise.resolve(global.cv);
-    if (global.__lotteryOpenCvReady) return global.__lotteryOpenCvReady;
     if (global.__lotteryOpenCvPromise) return global.__lotteryOpenCvPromise;
 
     return new Promise(function (resolve, reject) {
@@ -700,12 +699,15 @@
       script.src = "./opencv-loader.js";
       script.async = true;
       script.onload = function () {
-        const ready = global.__lotteryOpenCvReady || global.__lotteryOpenCvPromise;
-        if (!ready) {
+        const load =
+          typeof global.__lotteryLoadOpenCv === "function"
+            ? global.__lotteryLoadOpenCv()
+            : global.__lotteryOpenCvPromise;
+        if (!load) {
           reject(new Error("OpenCV 加载器启动失败"));
           return;
         }
-        ready.then(resolve, reject);
+        load.then(resolve, reject);
       };
       script.onerror = function () {
         reject(new Error("OpenCV 加载失败"));

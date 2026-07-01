@@ -1,4 +1,4 @@
-const APP_VERSION = "1.5.2";
+const APP_VERSION = "1.5.3";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const FETCH_TIMEOUT_MS = 15000;
