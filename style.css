@@ -787,6 +787,18 @@ textarea {
   font-weight: 800;
 }
 
+.draw-fuyun-tag {
+  flex: 1 1 100%;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #b45309;
+  background: linear-gradient(135deg, #fff7ed, #ffedd5);
+  border: 1px solid #fdba74;
+  border-radius: 999px;
+  padding: 4px 10px;
+  text-align: center;
+}
+
 .next-draw-meta {
   display: flex;
   justify-content: space-between;
