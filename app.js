@@ -1806,6 +1806,13 @@ if (els.ocrStallBannerClose) {
   els.ocrStallBannerClose.addEventListener("click", openOcrErrorFromBanner);
 }
 
+document.addEventListener("click", function (event) {
+  const cwlLink = event.target.closest(".cwl-official-link");
+  if (!cwlLink) return;
+  event.preventDefault();
+  openCwlOfficialUrl(cwlLink.getAttribute("data-cwl-url") || cwlLink.href);
+});
+
 onTypeChange();
 loadAccessInfo();
 preloadOcrAssets();
