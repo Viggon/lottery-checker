@@ -687,7 +687,7 @@
   }
 
   const MAX_IMAGE_EDGE = 1200;
-  const MOBILE_MAX_IMAGE_EDGE = 800;
+  const MOBILE_MAX_IMAGE_EDGE = 960;
   const IMAGE_LOAD_TIMEOUT_MS = 15000;
   const PREPROCESS_STEP_TIMEOUT_MS = 20000;
   const CANVAS_ENCODE_TIMEOUT_MS = 12000;
@@ -1158,10 +1158,11 @@
     if (lotteryType === "ssq") {
       pulseProgress(report, 10, "分析号码行布局...");
       await yieldToMain();
-      ssqStrips = extractSsqLayoutRowStrips(canvas).map(function (strip) {
+      ssqStrips = extractSsqRowStripsFromCanvas(canvas).map(function (strip) {
         return {
           id: strip.id,
           dataUrl: strip.dataUrl,
+          dataUrls: strip.dataUrls || [strip.dataUrl],
           source: strip.source || "layout",
         };
       });
@@ -1535,10 +1536,20 @@
     return rows
       .map(function (row, index) {
         const canvas = cropSsqBetRowStrip(work, row);
+        const contrast = renderVariant(
+          canvas,
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+          "contrast"
+        );
+        const encoded = encodeSsqStrip({ raw: canvas, contrast: contrast });
         return {
           id: "ssq-color-row-" + index,
-          dataUrl: canvasToDataUrl(canvas),
-          canvas: canvas,
+          dataUrl: encoded.dataUrl,
+          dataUrls: encoded.dataUrls,
+          canvas: contrast,
           source: "color",
         };
       })
@@ -1565,7 +1576,12 @@
     fallbackRight: 0.97,
     defaultRows: 5,
     stripScale: 2.6,
+    mobileStripScale: 3.4,
   };
+
+  function getStripScale() {
+    return isMobileLike() ? SSQ_LAYOUT.mobileStripScale : SSQ_LAYOUT.stripScale;
+  }
 
   function rowTextScore(canvas, yStart, yEnd, xStart, xEnd) {
     const w = canvas.width;
@@ -1719,8 +1735,29 @@
       sw,
       sh + padY * 2
     );
-    const scaled = scaleCanvas(crop, SSQ_LAYOUT.stripScale);
-    return renderVariant(scaled, 0, 0, scaled.width, scaled.height, "adaptive");
+    const scaled = scaleCanvas(crop, getStripScale());
+    const contrast = renderVariant(
+      scaled,
+      0,
+      0,
+      scaled.width,
+      scaled.height,
+      "contrast"
+    );
+    return {
+      raw: scaled,
+      contrast: contrast,
+    };
+  }
+
+  function encodeSsqStrip(stripCanvases) {
+    return {
+      dataUrl: canvasToDataUrl(stripCanvases.contrast),
+      dataUrls: [
+        canvasToDataUrl(stripCanvases.contrast),
+        canvasToDataUrl(stripCanvases.raw),
+      ],
+    };
   }
 
   function extractSsqLayoutRowStrips(base) {
@@ -1730,23 +1767,93 @@
 
     return rows
       .map(function (row, index) {
-        const canvas = prepareSsqStripCanvas(
+        const canvases = prepareSsqStripCanvas(
           base,
           bounds.left,
           bounds.top + row.y,
           zoneWidth,
           row.h
         );
+        const encoded = encodeSsqStrip(canvases);
         return {
           id: "ssq-layout-row-" + index,
-          dataUrl: canvasToDataUrl(canvas),
-          canvas: canvas,
+          dataUrl: encoded.dataUrl,
+          dataUrls: encoded.dataUrls,
+          canvas: canvases.contrast,
           source: "layout",
         };
       })
       .filter(function (item) {
         return item.canvas.width >= 80 && item.canvas.height >= 16;
       });
+  }
+
+  function parseSsqStripFromItems(items) {
+    if (!items || !items.length) return null;
+    const sorted = items.slice().sort(function (a, b) {
+      const ax =
+        a.poly.reduce(function (s, p) {
+          return s + p.x;
+        }, 0) / a.poly.length;
+      const ay =
+        a.poly.reduce(function (s, p) {
+          return s + p.y;
+        }, 0) / a.poly.length;
+      const bx =
+        b.poly.reduce(function (s, p) {
+          return s + p.x;
+        }, 0) / b.poly.length;
+      const by =
+        b.poly.reduce(function (s, p) {
+          return s + p.y;
+        }, 0) / b.poly.length;
+      if (Math.abs(ay - by) < 8) return ax - bx;
+      return ay - by || ax - bx;
+    });
+    const text = sorted
+      .map(function (item) {
+        return item.text || "";
+      })
+      .join(" ");
+    return parseSsqStripText(text);
+  }
+
+  function scoreSsqParsedLine(line) {
+    if (!line) return -1;
+    const parts = line.split(" + ");
+    if (parts.length !== 2) return 0;
+    const reds = parts[0].split(/\s+/).filter(Boolean);
+    const blue = parts[1];
+    if (reds.length !== 6) return reds.length;
+    if (!inRange(blue, 1, 16)) return 5;
+    return 10 + (isValidSsqReds(reds) ? 4 : 0);
+  }
+
+  async function recognizeSsqStripBest(strip) {
+    const urls = strip.dataUrls || [strip.dataUrl];
+    let best = null;
+    let bestScore = -1;
+
+    for (let u = 0; u < urls.length; u += 1) {
+      const result = await recognizeDataUrl(urls[u]);
+      const candidates = [];
+      const fromText = parseSsqStripText(result.text || "");
+      if (fromText) candidates.push(fromText);
+      const fromItems = parseSsqStripFromItems(result.items || []);
+      if (fromItems && candidates.indexOf(fromItems) === -1) {
+        candidates.push(fromItems);
+      }
+
+      for (let c = 0; c < candidates.length; c += 1) {
+        const score = scoreSsqParsedLine(candidates[c]);
+        if (score > bestScore) {
+          bestScore = score;
+          best = candidates[c];
+        }
+      }
+    }
+
+    return best;
   }
 
   function parseSsqStripText(text) {
@@ -1963,6 +2070,7 @@
             return {
               id: strip.id,
               dataUrl: strip.dataUrl,
+              dataUrls: strip.dataUrls || [strip.dataUrl],
               source: strip.source || "layout",
             };
           })
@@ -2016,13 +2124,48 @@
 
   const SSQ_STRIP_HIT_RATE = 0.4;
 
-  function shouldSkipSupplementalZoneOcr(stripLines, stripCount) {
-    if (stripCount < 2) return false;
-    if (stripLines.length < 3) return false;
-    if (stripCount >= 4 && stripLines.length >= Math.ceil(stripCount * 0.75)) {
-      return true;
+  function shouldSkipSupplementalZoneOcr(linesByIndex) {
+    if (!linesByIndex || !linesByIndex.length) return false;
+    return linesByIndex.every(function (line) {
+      return !!line;
+    });
+  }
+
+  function buildFinalSsqLines(stripResult, ocrResult, expectedCount) {
+    expectedCount = expectedCount || 5;
+    const byIndex = stripResult.linesByIndex || [];
+    const used = new Set();
+    const output = [];
+
+    for (let i = 0; i < byIndex.length; i += 1) {
+      const line = byIndex[i] || null;
+      output.push(line);
+      if (line) used.add(line);
     }
-    return stripLines.length / stripCount >= SSQ_STRIP_HIT_RATE;
+
+    const zoneLines = (ocrResult.lines || []).filter(function (line) {
+      return line && !used.has(line);
+    });
+    let zoneIdx = 0;
+
+    for (let i = 0; i < output.length; i += 1) {
+      if (!output[i] && zoneIdx < zoneLines.length) {
+        output[i] = zoneLines[zoneIdx];
+        used.add(output[i]);
+        zoneIdx += 1;
+      }
+    }
+
+    while (output.length < expectedCount && zoneIdx < zoneLines.length) {
+      const line = zoneLines[zoneIdx];
+      zoneIdx += 1;
+      if (!used.has(line)) {
+        output.push(line);
+        used.add(line);
+      }
+    }
+
+    return output.filter(Boolean).slice(0, expectedCount);
   }
 
   function collectParsedLineVotes(texts, lotteryType) {
@@ -2088,31 +2231,27 @@
   }
 
   async function runSsqStripOcr(strips, onPass) {
-    if (!strips.length) return { lines: [], votes: {} };
+    if (!strips.length) {
+      return { lines: [], linesByIndex: [], votes: {} };
+    }
 
     const votes = {};
-    const firstSeen = {};
+    const linesByIndex = [];
 
     for (let i = 0; i < strips.length; i += 1) {
-      const result = await recognizeDataUrl(strips[i].dataUrl);
-      const line = parseSsqStripText(result.text || "");
+      const line = await recognizeSsqStripBest(strips[i]);
+      linesByIndex.push(line || null);
       if (line) {
         const weight = strips[i].source === "layout" ? 4 : 3;
         votes[line] = (votes[line] || 0) + weight;
-        const position = i * 100;
-        if (firstSeen[line] == null || position < firstSeen[line]) {
-          firstSeen[line] = position;
-        }
       }
       if (onPass) onPass(i + 1, strips.length);
       await yieldToMain();
     }
 
-    const lines = Object.keys(firstSeen).sort(function (a, b) {
-      return firstSeen[a] - firstSeen[b];
-    });
+    const lines = linesByIndex.filter(Boolean);
 
-    return { lines: lines, votes: votes };
+    return { lines: lines, linesByIndex: linesByIndex, votes: votes };
   }
 
   async function recognizeLotteryImage(file, lotteryType, onProgress) {
@@ -2139,27 +2278,20 @@
       stripRawText = stripResult.lines.join("\n");
     }
 
-    const stripHitRate =
-      prepared.ssqStrips && prepared.ssqStrips.length
-        ? stripResult.lines.length / prepared.ssqStrips.length
-        : 0;
     const ssqFastDone =
       lotteryType === "ssq" &&
-      shouldSkipSupplementalZoneOcr(
-        stripResult.lines,
-        prepared.ssqStrips ? prepared.ssqStrips.length : 0
-      );
+      shouldSkipSupplementalZoneOcr(stripResult.linesByIndex);
 
     let ocrTexts = [];
     if (!ssqFastDone) {
       const ocrStart = lotteryType === "ssq" && prepared.ssqStrips.length ? 88 : 40;
       report(ocrStart, lotteryType === "ssq" ? "正在补充识别..." : "正在识别号码...");
       ocrTexts = await runMultiPassOcr(prepared.variants, function (done, total) {
-          const percent = ocrStart + (done / total) * (92 - ocrStart);
-          report(percent, "增强识别中 " + done + "/" + total);
-        });
+        const percent = ocrStart + (done / total) * (92 - ocrStart);
+        report(percent, "增强识别中 " + done + "/" + total);
+      });
     } else {
-      report(92, "排版识别完成...");
+      report(92, "逐行识别完成...");
     }
 
     report(94, "正在整理识别结果...");
@@ -2176,16 +2308,14 @@
     const detectedType = detectLotteryType(rawText);
     const activeType = detectedType || lotteryType;
     const ocrResult = collectParsedLineVotes(ocrTexts, activeType);
-    let lines = ssqFastDone ? stripResult.lines : ocrResult.lines;
-
-    if (lotteryType === "ssq" && stripResult.lines.length && !ssqFastDone) {
-      lines = mergeSsqLineSources(
-        stripResult.lines,
-        ocrResult.lines,
-        stripResult.votes,
-        ocrResult.votes
-      );
-    }
+    let lines =
+      lotteryType === "ssq"
+        ? buildFinalSsqLines(
+            stripResult,
+            ocrResult,
+            Math.max(prepared.ssqStrips.length || 0, 5)
+          )
+        : ocrResult.lines;
     report(100, "识别完成");
 
     return {

@@ -1,4 +1,4 @@
-const APP_VERSION = "1.6.3";
+const APP_VERSION = "1.6.4";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
