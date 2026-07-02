@@ -1,4 +1,4 @@
-const APP_VERSION = "1.5.4";
+const APP_VERSION = "1.5.5";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const FETCH_TIMEOUT_MS = 15000;
@@ -346,11 +346,10 @@ const els = {
   ocrErrorBackdrop: document.getElementById("ocrErrorBackdrop"),
 };
 
-let ocrWatchdogWorker = null;
 let ocrLastStatus = "";
 let ocrErrorShown = false;
-const OCR_WATCHDOG_MS_MOBILE = 120000;
-const OCR_WATCHDOG_MS_DESKTOP = 180000;
+const OCR_WATCHDOG_MS_MOBILE = 90000;
+const OCR_WATCHDOG_MS_DESKTOP = 120000;
 
 function normalize2(value) {
   const n = String(value).trim();
@@ -487,31 +486,18 @@ function isMobileDevice() {
 function startOcrWatchdog() {
   stopOcrWatchdog();
   const ms = isMobileDevice() ? OCR_WATCHDOG_MS_MOBILE : OCR_WATCHDOG_MS_DESKTOP;
-  pushOcrDiag("watchdog start " + ms + "ms");
-  const workerCode =
-    "self.onmessage=function(e){setTimeout(function(){self.postMessage('timeout')},e.data)};";
-  const worker = new Worker(
-    URL.createObjectURL(new Blob([workerCode], { type: "application/javascript" }))
-  );
-  worker.onmessage = function () {
-    pushOcrDiag("watchdog timeout fired");
-    const err = new Error(
-      "识别引擎加载超时（已等待 " + Math.round(ms / 1000) + " 秒，请换 WiFi 后重试）"
-    );
-    if (window.LotteryOcr && window.LotteryOcr.resetEngine) {
-      window.LotteryOcr.resetEngine();
-    }
-    showOcrErrorDialog(err);
-    stopOcrWatchdog();
-  };
-  worker.postMessage(ms);
-  ocrWatchdogWorker = worker;
+  pushOcrDiag("watchdog start " + ms + "ms iframe");
+  if (window.LotteryOcrWatchdog) {
+    window.LotteryOcrWatchdog.start(ms, {
+      version: APP_VERSION,
+      lastStatus: ocrLastStatus,
+    });
+  }
 }
 
 function stopOcrWatchdog() {
-  if (ocrWatchdogWorker) {
-    ocrWatchdogWorker.terminate();
-    ocrWatchdogWorker = null;
+  if (window.LotteryOcrWatchdog) {
+    window.LotteryOcrWatchdog.stop();
   }
 }
 
@@ -523,8 +509,9 @@ function closeOcrErrorDialog() {
 }
 
 function showOcrErrorDialog(err) {
-  if (ocrErrorShown) return;
+  if (ocrErrorShown || window.__ocrErrorShown) return;
   ocrErrorShown = true;
+  window.__ocrErrorShown = true;
   const msg = (err && err.message) || String(err || "识别失败");
   const snapshot = {
     version: APP_VERSION,
@@ -551,19 +538,9 @@ function showOcrErrorDialog(err) {
 }
 
 function preloadOcrAssets() {
-  pushOcrDiag("preload start");
-  if (!document.querySelector('script[data-lottery-opencv="1"]')) {
-    const opencvScript = document.createElement("script");
-    opencvScript.src = "./vendor/opencv/opencv.js";
-    opencvScript.async = true;
-    opencvScript.dataset.lotteryOpencv = "1";
-    opencvScript.onload = function () {
-      pushOcrDiag("preload opencv onload cv=" + !!(window.cv && window.cv.Mat));
-    };
-    opencvScript.onerror = function () {
-      pushOcrDiag("preload opencv onerror");
-    };
-    document.head.appendChild(opencvScript);
+  pushOcrDiag("preload start cv=" + !!(window.cv && window.cv.Mat));
+  if (window.LotteryOcrWatchdog) {
+    window.LotteryOcrWatchdog.hideBootOverlay();
   }
   if (!window.__lotteryPaddlePreload) {
     window.__lotteryPaddlePreload = true;
@@ -779,6 +756,7 @@ async function handleOcrFile(file) {
   resetOcrSession();
   window.__lotteryOcrDiag = [];
   ocrErrorShown = false;
+  window.__ocrErrorShown = false;
   pushOcrDiag("scan start " + file.name + " " + file.size + "b");
   setOcrStatus("准备识别...", false, 0);
   els.ocrRawWrap.classList.add("hidden");
@@ -826,6 +804,9 @@ async function handleOcrFile(file) {
     });
   } catch (err) {
     stopOcrWatchdog();
+    if (window.LotteryOcr && window.LotteryOcr.resetEngine) {
+      window.LotteryOcr.resetEngine();
+    }
     showOcrErrorDialog(err);
   } finally {
     if (els.cameraInput) els.cameraInput.value = "";

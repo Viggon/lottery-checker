@@ -13,6 +13,14 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <div id="bootOverlay" class="boot-overlay" aria-hidden="false">
+      <div class="boot-overlay-inner">
+        <p class="boot-title">正在初始化识别引擎</p>
+        <p class="boot-hint">首次约需 30–60 秒，请保持网络畅通，请勿关闭页面</p>
+        <p id="bootStatus" class="boot-status">正在加载 OpenCV...</p>
+      </div>
+    </div>
+
     <div class="page-bg" aria-hidden="true">
       <div class="page-bg-lake"></div>
       <div class="page-bg-overlay"></div>
@@ -144,6 +152,21 @@
       </div>
     </div>
 
+    <script src="./ocr-watchdog.js"></script>
+    <script>
+      document.body.style.overflow = "hidden";
+      window.__lotteryOcrDiag = [];
+      window.__lotteryOcrDiag.push(
+        new Date().toISOString().slice(11, 19) + " boot start"
+      );
+      if (window.LotteryOcrWatchdog) {
+        var isMobile = /Android|iPhone|iPad|iPod|Mobi/i.test(
+          navigator.userAgent || ""
+        );
+        LotteryOcrWatchdog.startBootMonitor(isMobile ? 120000 : 180000);
+      }
+    </script>
+    <script src="./vendor/opencv/opencv.js" data-lottery-opencv="1"></script>
     <script src="./ocr.js"></script>
     <script src="./app.js"></script>
   </body>

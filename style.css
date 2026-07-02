@@ -1002,6 +1002,53 @@ textarea {
   margin-top: 4px;
 }
 
+.boot-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(247, 244, 255, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.boot-overlay.hidden {
+  display: none;
+}
+
+.boot-overlay-inner {
+  max-width: 320px;
+  text-align: center;
+  padding: 28px 22px;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+
+.boot-title {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.boot-hint {
+  margin: 0 0 14px;
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.boot-status {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--pink-deep);
+  font-weight: 600;
+}
+
 @media (max-width: 520px) {
   .hero h1 {
     font-size: 1.75rem;
