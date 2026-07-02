@@ -724,6 +724,27 @@ textarea {
   margin-bottom: 14px;
 }
 
+.issue-picker {
+  margin-bottom: 12px;
+}
+
+.issue-picker label {
+  margin-bottom: 8px;
+}
+
+.issue-picker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 8px;
+}
+
+.issue-picker-row select,
+.issue-picker-row input {
+  min-width: 0;
+  padding: 10px 12px;
+  font-size: 0.88rem;
+}
+
 .draw-meta strong {
   color: var(--pink-deep);
   font-weight: 800;

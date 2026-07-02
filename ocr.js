@@ -2796,6 +2796,11 @@
     return parsed;
   }
 
+  function extractHelloLotteryIssue(rawText) {
+    const match = String(rawText || "").match(/开奖期[：:]\s*(\d{5,8})/u);
+    return match ? match[1] : null;
+  }
+
   function prefersHelloLotteryApi() {
     if (!global.HelloLotteryApi || global.HelloLotteryApi.enabled === false) {
       return false;
@@ -2832,6 +2837,7 @@
       activeType: activeType,
       previewUrl: previewUrl,
       ocrSource: "hello-lottery-api",
+      detectedIssue: extractHelloLotteryIssue(rawText),
     };
   }
 

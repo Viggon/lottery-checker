@@ -1,4 +1,4 @@
-const APP_VERSION = "1.7.3";
+const APP_VERSION = "1.8.0";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -318,6 +318,7 @@ let nextDrawTimer = null;
 
 const els = {
   lotteryType: document.getElementById("lotteryType"),
+  issueSelect: document.getElementById("issueSelect"),
   issueNo: document.getElementById("issueNo"),
   refreshBtn: document.getElementById("refreshBtn"),
   compareBtn: document.getElementById("compareBtn"),
@@ -789,12 +790,15 @@ function formatSourceLabel(source) {
   return source || "在线开奖接口";
 }
 
-async function fetchHuiniaoOnline(type, limit) {
+async function fetchHuiniaoOnline(type, limit, page) {
+  page = page || 1;
   const url =
     HUINIAO_API +
     "?type=" +
     encodeURIComponent(type) +
-    "&page=1&limit=" +
+    "&page=" +
+    encodeURIComponent(page) +
+    "&limit=" +
     encodeURIComponent(limit) +
     "&_=" +
     String(Date.now());
@@ -851,6 +855,147 @@ async function fetchLotteryPayload(type, limit) {
   }
 
   return fetchHuiniaoOnline(type, limit);
+}
+
+function getWantedIssue() {
+  const manual = els.issueNo ? els.issueNo.value.trim() : "";
+  if (manual) return manual;
+  const selected = els.issueSelect ? els.issueSelect.value.trim() : "";
+  return selected;
+}
+
+function setIssueInputs(issue) {
+  const wanted = String(issue || "").trim();
+  if (!wanted) {
+    if (els.issueSelect) els.issueSelect.value = "";
+    if (els.issueNo) els.issueNo.value = "";
+    return;
+  }
+  const inList =
+    state.draws &&
+    state.draws.some(function (draw) {
+      return String(draw.issue) === wanted;
+    });
+  if (inList && els.issueSelect) {
+    els.issueSelect.value = wanted;
+    if (els.issueNo) els.issueNo.value = "";
+    return;
+  }
+  if (els.issueSelect) els.issueSelect.value = "";
+  if (els.issueNo) els.issueNo.value = wanted;
+}
+
+function renderIssueOptions(draws) {
+  if (!els.issueSelect) return;
+  const wanted = getWantedIssue();
+  const options = ['<option value="">最新一期</option>'];
+  draws.forEach(function (draw) {
+    const issue = String(draw.issue);
+    const label =
+      "第 " + issue + " 期" + (draw.date ? " · " + draw.date : "");
+    options.push(
+      '<option value="' + escapeHtml(issue) + '">' + escapeHtml(label) + "</option>"
+    );
+  });
+  els.issueSelect.innerHTML = options.join("");
+  if (wanted && draws.some(function (draw) { return String(draw.issue) === wanted; })) {
+    els.issueSelect.value = wanted;
+    if (els.issueNo) els.issueNo.value = "";
+  } else if (wanted && els.issueNo) {
+    els.issueSelect.value = "";
+    els.issueNo.value = wanted;
+  }
+}
+
+function mergeDrawIntoList(draw) {
+  if (!draw) return;
+  const issue = String(draw.issue);
+  if (
+    state.draws.some(function (item) {
+      return String(item.issue) === issue;
+    })
+  ) {
+    return;
+  }
+  state.draws.push(draw);
+  state.draws.sort(function (a, b) {
+    return parseInt(b.issue, 10) - parseInt(a.issue, 10);
+  });
+}
+
+async function findDrawByIssueOnline(type, issue) {
+  const wanted = String(issue || "").trim();
+  if (!wanted) return null;
+
+  const cached = state.draws.find(function (draw) {
+    return String(draw.issue) === wanted;
+  });
+  if (cached) return cached;
+
+  for (let page = 1; page <= 5; page += 1) {
+    const payload = await fetchHuiniaoOnline(type, 30, page);
+    const draws = parseDrawList(payload, type);
+    const found = draws.find(function (draw) {
+      return String(draw.issue) === wanted;
+    });
+    if (found) return found;
+    if (draws.length < 30) break;
+  }
+  return null;
+}
+
+function applyCurrentDraw(draw) {
+  if (!draw) return;
+  state.currentDraw = draw;
+  renderDraw(draw);
+  const timeLabel = new Date().toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  setStatus(
+    "已切换：第 " +
+      draw.issue +
+      " 期 · " +
+      formatSourceLabel(state.source) +
+      " · " +
+      timeLabel
+  );
+  if (state.ocrLines.length) {
+    compareNumbers(state.ocrLines);
+  }
+}
+
+async function applyIssueSelection() {
+  const wantedIssue = getWantedIssue();
+  if (!wantedIssue) {
+    if (state.draws.length) {
+      applyCurrentDraw(state.draws[0]);
+      return;
+    }
+    await fetchDraws();
+    return;
+  }
+
+  let draw = state.draws.find(function (item) {
+    return String(item.issue) === wantedIssue;
+  });
+  if (!draw) {
+    setStatus("正在查询第 " + wantedIssue + " 期...");
+    draw = await findDrawByIssueOnline(state.type || els.lotteryType.value, wantedIssue);
+    if (draw) {
+      mergeDrawIntoList(draw);
+      renderIssueOptions(state.draws);
+      setIssueInputs(wantedIssue);
+    }
+  }
+
+  if (!draw) {
+    setStatus("未找到期号 " + wantedIssue, true);
+    return;
+  }
+
+  applyCurrentDraw(draw);
 }
 
 function resetOcrSession() {
@@ -919,7 +1064,12 @@ async function handleOcrFile(file) {
     state.ocrLines = result.lines;
     setOcrStatus(`识别完成，共 ${result.lines.length} 注，正在对照...`);
 
-    if (!state.currentDraw) {
+    if (result.detectedIssue) {
+      setIssueInputs(result.detectedIssue);
+      pushOcrDiag("ticket issue: " + result.detectedIssue);
+    }
+
+    if (!state.currentDraw || result.detectedIssue) {
       await fetchDraws();
     }
     if (!state.currentDraw) {
@@ -1118,11 +1268,16 @@ async function enrichDrawsWithCwlPrizes(type, draws) {
 async function fetchDraws() {
   const type = els.lotteryType.value;
   state.type = type;
-  setStatus("正在在线获取开奖数据...");
+  const wantedIssue = getWantedIssue();
+  setStatus(
+    wantedIssue
+      ? "正在查询第 " + wantedIssue + " 期开奖..."
+      : "正在在线获取开奖数据..."
+  );
   els.refreshBtn.disabled = true;
 
   try {
-    const payload = await fetchLotteryPayload(type, 20);
+    const payload = await fetchLotteryPayload(type, 30);
 
     state.draws = parseDrawList(payload, type);
     state.draws = await enrichDrawsWithCwlPrizes(type, state.draws);
@@ -1130,13 +1285,28 @@ async function fetchDraws() {
     state.source = payload.source;
     if (!state.draws.length) throw new Error("没有拿到开奖数据");
 
-    const wantedIssue = els.issueNo.value.trim();
-    state.currentDraw = wantedIssue
-      ? state.draws.find((d) => String(d.issue) === wantedIssue) || null
+    renderIssueOptions(state.draws);
+
+    let draw = wantedIssue
+      ? state.draws.find(function (item) {
+          return String(item.issue) === wantedIssue;
+        }) || null
       : state.draws[0];
 
-    if (!state.currentDraw) throw new Error(`未找到期号 ${wantedIssue}`);
+    if (wantedIssue && !draw) {
+      draw = await findDrawByIssueOnline(type, wantedIssue);
+      if (draw) {
+        mergeDrawIntoList(draw);
+        renderIssueOptions(state.draws);
+        setIssueInputs(wantedIssue);
+      }
+    }
 
+    if (!draw) {
+      throw new Error(wantedIssue ? "未找到期号 " + wantedIssue : "没有拿到开奖数据");
+    }
+
+    state.currentDraw = draw;
     renderDraw(state.currentDraw);
     renderNextDraw();
     startNextDrawTimer();
@@ -1148,6 +1318,10 @@ async function fetchDraws() {
     setStatus(
       `已在线更新：${LOTTERY[type].name} 第 ${state.currentDraw.issue} 期 · ${formatSourceLabel(state.source)} · ${timeLabel}`
     );
+
+    if (state.ocrLines.length) {
+      compareNumbers(state.ocrLines);
+    }
   } catch (err) {
     els.drawMeta.textContent = "暂无数据";
     els.drawBalls.innerHTML = "";
@@ -1253,6 +1427,11 @@ function onTypeChange() {
   state.ocrLines = [];
   state.currentDraw = null;
   state.nextDraw = null;
+  state.draws = [];
+  if (els.issueSelect) {
+    els.issueSelect.innerHTML = '<option value="">最新一期</option>';
+  }
+  if (els.issueNo) els.issueNo.value = "";
   if (nextDrawTimer) {
     clearInterval(nextDrawTimer);
     nextDrawTimer = null;
@@ -1285,6 +1464,21 @@ els.lotteryType.addEventListener("change", function () {
 });
 els.refreshBtn.addEventListener("click", fetchDraws);
 els.compareBtn.addEventListener("click", () => compareNumbers());
+if (els.issueSelect) {
+  els.issueSelect.addEventListener("change", function () {
+    if (els.issueNo) els.issueNo.value = "";
+    applyIssueSelection();
+  });
+}
+if (els.issueNo) {
+  els.issueNo.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyIssueSelection();
+    }
+  });
+  els.issueNo.addEventListener("change", applyIssueSelection);
+}
 bindScanInputs();
 
 els.menuBtn.addEventListener("click", openMenu);

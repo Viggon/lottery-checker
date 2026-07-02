@@ -128,6 +128,22 @@
           </div>
           <span id="currentLotteryLabel" class="lottery-chip">双色球</span>
         </div>
+        <div class="issue-picker field">
+          <label for="issueSelect">对照期号（可选）</label>
+          <div class="issue-picker-row">
+            <select id="issueSelect" aria-label="选择开奖期号">
+              <option value="">最新一期</option>
+            </select>
+            <input
+              id="issueNo"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              placeholder="其他期号"
+              aria-label="输入其他期号"
+            />
+          </div>
+        </div>
         <div id="drawMeta" class="draw-meta">暂无数据</div>
         <div id="nextDrawMeta" class="next-draw-meta hidden"></div>
         <div id="drawBalls" class="balls draw-balls"></div>
@@ -212,9 +228,6 @@
           <button type="button" class="lottery-tab" data-type="qlc">七乐彩</button>
           <button type="button" class="lottery-tab" data-type="klb">快乐8</button>
         </nav>
-        <div class="menu-field">
-          <input id="issueNo" type="text" placeholder="指定开奖期号（可选）" />
-        </div>
         <div id="localAccess" class="menu-local hidden">
           <div id="accessInfo" class="local-access-body"></div>
         </div>
