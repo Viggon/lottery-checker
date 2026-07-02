@@ -1,4 +1,4 @@
-const APP_VERSION = "1.8.6";
+const APP_VERSION = "1.8.7";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -331,6 +331,7 @@ const state = {
 
 let nextDrawTimer = null;
 let selectedIssue = "";
+let issuePickerOpen = false;
 
 const els = {
   lotteryType: document.getElementById("lotteryType"),
@@ -932,6 +933,26 @@ function setIssueSelection(issue) {
   renderIssueTabs(state.draws);
 }
 
+function setIssuePickerOpen(open) {
+  issuePickerOpen = !!open;
+  if (!els.issueTabs) return;
+  const menu = els.issueTabs.querySelector(".issue-picker-menu");
+  const btn = els.issueTabs.querySelector(".issue-picker-btn");
+  if (menu) menu.classList.toggle("hidden", !issuePickerOpen);
+  if (btn) {
+    btn.classList.toggle("open", issuePickerOpen);
+    btn.setAttribute("aria-expanded", issuePickerOpen ? "true" : "false");
+  }
+}
+
+function closeIssuePickerMenu() {
+  setIssuePickerOpen(false);
+}
+
+function toggleIssuePickerMenu() {
+  setIssuePickerOpen(!issuePickerOpen);
+}
+
 function buildIssueTabItems(draws) {
   const items = [{ issue: "", label: "最新一期" }];
   const list = draws || [];
@@ -959,22 +980,52 @@ function renderIssueTabs(draws) {
   if (!els.issueTabs) return;
   const items = buildIssueTabItems(draws);
   const activeIssue = getWantedIssue();
-  els.issueTabs.innerHTML = items
-    .map(function (item) {
-      const isActive = activeIssue ? activeIssue === item.issue : item.issue === "";
-      return (
-        '<button type="button" class="issue-tab' +
-        (isActive ? " active" : "") +
-        '" data-issue="' +
-        escapeHtml(item.issue) +
-        '" role="tab" aria-selected="' +
-        (isActive ? "true" : "false") +
-        '">' +
-        escapeHtml(item.label) +
-        "</button>"
-      );
-    })
-    .join("");
+  const activeItem =
+    items.find(function (item) {
+      return activeIssue ? item.issue === activeIssue : item.issue === "";
+    }) || items[0];
+  const dropdownItems = items.filter(function (item) {
+    return item.issue !== "";
+  });
+  const menuItems = activeIssue
+    ? [{ issue: "", label: "最新一期" }].concat(dropdownItems)
+    : dropdownItems;
+
+  els.issueTabs.innerHTML =
+    '<button type="button" class="issue-picker-btn' +
+    (issuePickerOpen ? " open" : "") +
+    '" aria-haspopup="listbox" aria-expanded="' +
+    (issuePickerOpen ? "true" : "false") +
+    '">' +
+    '<span class="issue-picker-label">' +
+    escapeHtml(activeItem.label) +
+    "</span>" +
+    (menuItems.length
+      ? '<span class="issue-picker-chevron" aria-hidden="true"></span>'
+      : "") +
+    "</button>" +
+    (menuItems.length
+      ? '<div class="issue-picker-menu' +
+        (issuePickerOpen ? "" : " hidden") +
+        '" role="listbox" aria-label="选择往期开奖">' +
+        menuItems
+          .map(function (item) {
+            const isActive = activeIssue ? activeIssue === item.issue : item.issue === "";
+            return (
+              '<button type="button" class="issue-picker-option' +
+              (isActive ? " active" : "") +
+              '" data-issue="' +
+              escapeHtml(item.issue) +
+              '" role="option" aria-selected="' +
+              (isActive ? "true" : "false") +
+              '">' +
+              escapeHtml(item.label) +
+              "</button>"
+            );
+          })
+          .join("") +
+        "</div>"
+      : "");
 }
 
 function mergeDrawIntoList(draw) {
@@ -1611,6 +1662,7 @@ function onTypeChange() {
   state.nextDraw = null;
   state.draws = [];
   selectedIssue = "";
+  closeIssuePickerMenu();
   if (els.issueTabs) {
     renderIssueTabs([]);
   }
@@ -1648,13 +1700,33 @@ els.refreshBtn.addEventListener("click", fetchDraws);
 els.compareBtn.addEventListener("click", () => compareNumbers());
 if (els.issueTabs) {
   els.issueTabs.addEventListener("click", function (event) {
-    const btn = event.target.closest(".issue-tab");
+    const option = event.target.closest(".issue-picker-option");
+    if (option) {
+      event.stopPropagation();
+      selectedIssue = option.dataset.issue || "";
+      closeIssuePickerMenu();
+      renderIssueTabs(state.draws);
+      applyIssueSelection();
+      return;
+    }
+
+    const btn = event.target.closest(".issue-picker-btn");
     if (!btn) return;
-    selectedIssue = btn.dataset.issue || "";
-    renderIssueTabs(state.draws);
-    applyIssueSelection();
+    event.stopPropagation();
+
+    if (els.issueTabs.querySelector(".issue-picker-menu")) {
+      toggleIssuePickerMenu();
+    } else {
+      selectedIssue = "";
+      applyIssueSelection();
+    }
   });
 }
+
+document.addEventListener("click", function (event) {
+  if (!els.issueTabs || els.issueTabs.contains(event.target)) return;
+  closeIssuePickerMenu();
+});
 bindScanInputs();
 
 els.menuBtn.addEventListener("click", openMenu);

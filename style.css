@@ -735,44 +735,109 @@ textarea {
   color: var(--muted);
 }
 
-.issue-tabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+.issue-picker-wrap {
+  position: relative;
 }
 
-.issue-tab {
+.issue-picker-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   min-width: 0;
-  padding: 10px 8px;
+  padding: 12px 14px;
   border: 2px solid rgba(184, 169, 255, 0.28);
   border-radius: 14px;
-  background: #faf8ff;
-  color: var(--text-strong);
+  background: linear-gradient(135deg, var(--pink), var(--lavender));
+  color: #fff;
   font: inherit;
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   font-weight: 700;
   line-height: 1.25;
-  text-align: center;
+  text-align: left;
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-}
-
-.issue-tab:active {
-  transform: scale(0.98);
-}
-
-.issue-tab.active {
-  color: #fff;
-  border-color: transparent;
-  background: linear-gradient(135deg, var(--pink), var(--lavender));
   box-shadow: 0 6px 14px rgba(255, 143, 171, 0.28);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.issue-tab:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.issue-picker-btn:active {
+  transform: scale(0.99);
+}
+
+.issue-picker-btn.open {
+  box-shadow: 0 8px 18px rgba(255, 143, 171, 0.34);
+}
+
+.issue-picker-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.issue-picker-chevron {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  margin-top: -3px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 0.2s ease, margin-top 0.2s ease;
+}
+
+.issue-picker-btn.open .issue-picker-chevron {
+  margin-top: 2px;
+  transform: rotate(-135deg);
+}
+
+.issue-picker-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  overflow: hidden;
+  border: 2px solid rgba(184, 169, 255, 0.28);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(120, 86, 255, 0.16);
+}
+
+.issue-picker-menu.hidden {
+  display: none;
+}
+
+.issue-picker-option {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px solid rgba(184, 169, 255, 0.14);
+  background: #faf8ff;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.issue-picker-option:last-child {
+  border-bottom: 0;
+}
+
+.issue-picker-option:active {
+  background: #f3eeff;
+}
+
+.issue-picker-option.active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--pink), var(--lavender));
 }
 
 .hero-version {
