@@ -8,8 +8,7 @@ const OCR_CLOUD_STALL_MS = 120000;
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const CWL_ORIGIN = "https://www.cwl.gov.cn";
-const CWL_SSQ_HOME_URL = CWL_ORIGIN + "/";
-const CWL_SSQ_DRAW_LIST_URL = CWL_ORIGIN + "/ygkj/wqkjgg/ssq/";
+const CWL_SSQ_DRAW_LIST_URL = CWL_ORIGIN + "/html5/ygkj/wqkjgg/ssq/";
 const SSQ_FUYUN_ISSUE_START = 2026014;
 const SSQ_FUYUN_POOL_STOP = 300000000;
 const SSQ_FUYUN_LEVEL = 7;
@@ -442,7 +441,7 @@ function buildCwlSsqOfficialUrl(draw) {
     const path = String(draw.cwlDetailsLink);
     return path.indexOf("http") === 0 ? path : CWL_ORIGIN + path;
   }
-  return CWL_SSQ_HOME_URL;
+  return CWL_SSQ_DRAW_LIST_URL;
 }
 
 function renderCwlOfficialLink(label, draw, className) {
@@ -461,7 +460,7 @@ function renderCwlOfficialLink(label, draw, className) {
 }
 
 async function openCwlOfficialUrl(url) {
-  const target = String(url || CWL_SSQ_HOME_URL).trim();
+  const target = String(url || CWL_SSQ_DRAW_LIST_URL).trim();
   let copied = false;
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -1607,7 +1606,7 @@ function renderDraw(draw) {
       fuyunHint = '<span class="draw-fuyun-tag">福运奖进行中（3+0 得 5 元）</span>';
     } else if (fuyunStatus === "unknown") {
       fuyunHint = renderCwlOfficialLink(
-        "福运奖状态未知，点此打开福彩官网（阳光开奖→双色球）",
+        "福运奖状态未知，点此查看福彩开奖公告",
         draw,
         "draw-fuyun-tag draw-fuyun-tag-unknown draw-fuyun-tag-link"
       );
