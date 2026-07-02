@@ -8,17 +8,54 @@
     <script>
       (function () {
         var stallMs = 8000;
+        function showOnParent(msg, log) {
+          var p = parent;
+          var d = p.document;
+          p.__ocrErrorShown = true;
+          p.__ocrScanActive = false;
+          var boot = d.getElementById("bootOverlay");
+          if (boot) boot.classList.add("hidden");
+          var banner = d.getElementById("ocrStallBanner");
+          var bannerText = d.getElementById("ocrStallBannerText");
+          if (banner && bannerText) {
+            bannerText.textContent = msg;
+            banner.classList.remove("hidden");
+          }
+          var overlay = d.getElementById("ocrFatalOverlay");
+          var msgEl = d.getElementById("ocrFatalMsg");
+          var logEl = d.getElementById("ocrFatalLog");
+          if (overlay && msgEl) {
+            msgEl.textContent = msg;
+            if (logEl) logEl.textContent = log || "";
+            overlay.style.display = "flex";
+            d.body.style.overflow = "hidden";
+          }
+          var modal = d.getElementById("ocrErrorModal");
+          var modalMsg = d.getElementById("ocrErrorMessage");
+          var modalLog = d.getElementById("ocrErrorLog");
+          if (modal && modalMsg && modalLog) {
+            modalMsg.textContent = msg;
+            modalLog.textContent = log || "";
+            modal.classList.remove("hidden");
+            modal.setAttribute("aria-hidden", "false");
+          }
+          var st = d.getElementById("ocrStatus");
+          if (st) {
+            st.textContent = msg;
+            st.className = "status ocr-status-line error";
+          }
+          try {
+            if (p.navigator.vibrate) p.navigator.vibrate([300, 120, 300]);
+          } catch (e1) {}
+        }
         function fire(msg, log) {
           try {
-            var p = parent;
-            p.__ocrErrorShown = true;
-            if (typeof p.__showOcrFatal === "function") {
-              p.__showOcrFatal(msg, log);
-              return;
-            }
-          } catch (e1) {}
+            showOnParent(msg, log);
+          } catch (e) {}
           try {
-            parent.postMessage({ type: "ocr-stall", msg: msg, log: log }, "*");
+            if (typeof parent.__showOcrFatal === "function") {
+              parent.__showOcrFatal(msg, log);
+            }
           } catch (e2) {}
         }
         function check() {
