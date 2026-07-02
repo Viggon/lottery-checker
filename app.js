@@ -1,4 +1,4 @@
-const APP_VERSION = "1.6.4";
+const APP_VERSION = "1.6.5";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -355,10 +355,12 @@ const els = {
 let ocrLastStatus = "";
 let ocrErrorShown = false;
 let mainStallTimer = null;
+let ocrBusy = false;
 const OCR_WATCHDOG_MS_MOBILE = 60000;
 const OCR_WATCHDOG_MS_DESKTOP = 90000;
 const OCR_STALL_MS_MOBILE = 8000;
 const OCR_STALL_MS_DESKTOP = 15000;
+const OCR_STALL_MS_EDGE = 18000;
 
 function normalize2(value) {
   const n = String(value).trim();
@@ -494,6 +496,25 @@ function isMobileDevice() {
   return /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent || "");
 }
 
+function isEdgeBrowser() {
+  return /EdgA|EdgiOS|Edg\//i.test(navigator.userAgent || "");
+}
+
+function getOcrStallMs() {
+  if (isEdgeBrowser()) return OCR_STALL_MS_EDGE;
+  return isMobileDevice() ? OCR_STALL_MS_MOBILE : OCR_STALL_MS_DESKTOP;
+}
+
+async function disposeOcrEngineSafely() {
+  try {
+    if (window.LotteryOcr && window.LotteryOcr.resetEngine) {
+      await window.LotteryOcr.resetEngine();
+    }
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 function startOcrWatchdog() {
   stopOcrWatchdog();
   const ms = isMobileDevice() ? OCR_WATCHDOG_MS_MOBILE : OCR_WATCHDOG_MS_DESKTOP;
@@ -502,7 +523,7 @@ function startOcrWatchdog() {
     window.LotteryOcrWatchdog.start(ms, {
       version: APP_VERSION,
       lastStatus: ocrLastStatus,
-      stallMs: isMobileDevice() ? OCR_STALL_MS_MOBILE : OCR_STALL_MS_DESKTOP,
+      stallMs: getOcrStallMs(),
     });
   }
 }
@@ -516,7 +537,7 @@ function stopMainStallMonitor() {
 
 function startMainStallMonitor() {
   stopMainStallMonitor();
-  const stallMs = isMobileDevice() ? OCR_STALL_MS_MOBILE : OCR_STALL_MS_DESKTOP;
+  const stallMs = getOcrStallMs();
   mainStallTimer = setInterval(function () {
     if (!window.__ocrScanActive || window.__ocrErrorShown) return;
     const stalled = Date.now() - (window.__ocrLastProgressAt || 0);
@@ -626,6 +647,10 @@ function preloadOcrAssets() {
     boot.classList.add("hidden");
     boot.setAttribute("aria-hidden", "true");
     document.body.style.overflow = "";
+  }
+  if (isEdgeBrowser()) {
+    pushOcrDiag("edge: skip paddle preload to save memory");
+    return;
   }
   if (!window.__lotteryPaddlePreload) {
     window.__lotteryPaddlePreload = true;
@@ -838,6 +863,11 @@ function resetOcrSession() {
 
 async function handleOcrFile(file) {
   if (!file) return;
+  if (ocrBusy) {
+    setOcrStatus("上一次识别尚未结束，请稍候...", true);
+    return;
+  }
+  ocrBusy = true;
   resetOcrSession();
   window.__lotteryOcrDiag = [];
   ocrErrorShown = false;
@@ -846,7 +876,14 @@ async function handleOcrFile(file) {
   window.__ocrLastProgressAt = Date.now();
   window.__ocrLastProgressMsg = "准备识别";
   pushOcrDiag("scan start " + file.name + " " + file.size + "b");
-  setOcrStatus("准备识别...", false, 0);
+  if (isEdgeBrowser()) {
+    pushOcrDiag("edge low-memory mode");
+  }
+  setOcrStatus(
+    isEdgeBrowser() ? "Edge 模式：准备识别（内存占用较高，请稍候）..." : "准备识别...",
+    false,
+    0
+  );
   els.ocrRawWrap.classList.add("hidden");
   startOcrWatchdog();
   startMainStallMonitor();
@@ -897,15 +934,18 @@ async function handleOcrFile(file) {
   } catch (err) {
     stopOcrWatchdog();
     stopMainStallMonitor();
-    if (window.LotteryOcr && window.LotteryOcr.resetEngine) {
-      window.LotteryOcr.resetEngine();
-    }
+    await disposeOcrEngineSafely();
     showOcrErrorDialog(err);
   } finally {
     window.__ocrScanActive = false;
     stopMainStallMonitor();
     if (els.cameraInput) els.cameraInput.value = "";
     if (els.galleryInput) els.galleryInput.value = "";
+    if (isEdgeBrowser()) {
+      await disposeOcrEngineSafely();
+      pushOcrDiag("edge: engine disposed after scan");
+    }
+    ocrBusy = false;
   }
 }
 
@@ -1262,6 +1302,22 @@ if (els.ocrStallBannerClose) {
 onTypeChange();
 loadAccessInfo();
 preloadOcrAssets();
+if (isEdgeBrowser()) {
+  document.addEventListener("visibilitychange", function () {
+    if (
+      document.visibilityState === "hidden" &&
+      !window.__ocrScanActive &&
+      !ocrBusy
+    ) {
+      disposeOcrEngineSafely();
+    }
+  });
+  window.addEventListener("pagehide", function () {
+    if (!window.__ocrScanActive) {
+      disposeOcrEngineSafely();
+    }
+  });
+}
 if (els.appVersion) {
   els.appVersion.textContent = "v" + APP_VERSION;
 }

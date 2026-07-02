@@ -78,8 +78,9 @@
       global.LotteryOcrEngine &&
       typeof global.LotteryOcrEngine.resetEngine === "function"
     ) {
-      global.LotteryOcrEngine.resetEngine();
+      return global.LotteryOcrEngine.resetEngine();
     }
+    return Promise.resolve();
   }
 
   async function recognizeDataUrl(dataUrl) {
@@ -688,6 +689,7 @@
 
   const MAX_IMAGE_EDGE = 1200;
   const MOBILE_MAX_IMAGE_EDGE = 960;
+  const EDGE_MAX_IMAGE_EDGE = 720;
   const IMAGE_LOAD_TIMEOUT_MS = 15000;
   const PREPROCESS_STEP_TIMEOUT_MS = 20000;
   const CANVAS_ENCODE_TIMEOUT_MS = 12000;
@@ -752,6 +754,18 @@
         }
       }
     });
+  }
+
+  function isEdgeBrowser() {
+    return /EdgA|EdgiOS|Edg\//i.test(navigator.userAgent || "");
+  }
+
+  function isLowMemoryOcrMode() {
+    return isEdgeBrowser();
+  }
+
+  function getMobileMaxImageEdge() {
+    return isLowMemoryOcrMode() ? EDGE_MAX_IMAGE_EDGE : MOBILE_MAX_IMAGE_EDGE;
   }
 
   function isMobileLike() {
@@ -1185,10 +1199,12 @@
         id: "mobile-zone",
         dataUrl: await canvasToDataUrlAsync(zoneScaled, CANVAS_ENCODE_TIMEOUT_MS),
       });
-      variants.push({
-        id: "mobile-zone-contrast",
-        dataUrl: await canvasToDataUrlAsync(contrast, CANVAS_ENCODE_TIMEOUT_MS),
-      });
+      if (!isLowMemoryOcrMode()) {
+        variants.push({
+          id: "mobile-zone-contrast",
+          dataUrl: await canvasToDataUrlAsync(contrast, CANVAS_ENCODE_TIMEOUT_MS),
+        });
+      }
     } else {
       pulseProgress(report, 10, "裁剪号码区...");
       await yieldToMain();
@@ -1212,7 +1228,7 @@
   async function preprocessImageMobile(file, report, lotteryType) {
     pulseProgress(report, 4, "正在读取图片...");
     await yieldToMain();
-    const canvas = await loadImageToCanvas(file, MOBILE_MAX_IMAGE_EDGE);
+    const canvas = await loadImageToCanvas(file, getMobileMaxImageEdge());
     pulseProgress(report, 8, "正在编码图片...");
     await yieldToMain();
     return buildMobilePreprocessResult(canvas, lotteryType, report);
@@ -1255,7 +1271,7 @@
     if (isMobileLike()) {
       pulseProgress(report, 36, "手机模式：准备识别图...");
       await yieldToMain();
-      const maxEdge = MOBILE_MAX_IMAGE_EDGE;
+      const maxEdge = getMobileMaxImageEdge();
       const scale = Math.min(1, maxEdge / Math.max(base.width, base.height));
       const small = scale < 1 ? scaleCanvas(base, scale) : base;
       await yieldToMain();
@@ -1577,9 +1593,11 @@
     defaultRows: 5,
     stripScale: 2.6,
     mobileStripScale: 3.4,
+    edgeStripScale: 2.8,
   };
 
   function getStripScale() {
+    if (isLowMemoryOcrMode()) return SSQ_LAYOUT.edgeStripScale;
     return isMobileLike() ? SSQ_LAYOUT.mobileStripScale : SSQ_LAYOUT.stripScale;
   }
 
@@ -1751,13 +1769,33 @@
   }
 
   function encodeSsqStrip(stripCanvases) {
+    const contrastUrl = canvasToDataUrl(stripCanvases.contrast);
+    if (isLowMemoryOcrMode()) {
+      return {
+        dataUrl: contrastUrl,
+        dataUrls: [contrastUrl],
+      };
+    }
     return {
-      dataUrl: canvasToDataUrl(stripCanvases.contrast),
-      dataUrls: [
-        canvasToDataUrl(stripCanvases.contrast),
-        canvasToDataUrl(stripCanvases.raw),
-      ],
+      dataUrl: contrastUrl,
+      dataUrls: [contrastUrl, canvasToDataUrl(stripCanvases.raw)],
     };
+  }
+
+  function releasePreparedImages(prepared) {
+    if (!prepared) return;
+    if (prepared.ssqStrips) {
+      prepared.ssqStrips.forEach(function (strip) {
+        strip.dataUrl = null;
+        strip.dataUrls = null;
+      });
+    }
+    if (prepared.variants) {
+      prepared.variants.forEach(function (variant) {
+        variant.dataUrl = null;
+      });
+    }
+    prepared.previewUrl = null;
   }
 
   function extractSsqLayoutRowStrips(base) {
@@ -2259,8 +2297,10 @@
     if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
 
     const report = makeProgressReporter(onProgress);
+    let prepared = null;
+    try {
     report(2, "准备识别...");
-    const prepared = await preprocessImage(file, report, lotteryType);
+    prepared = await preprocessImage(file, report, lotteryType);
 
     report(36, "正在加载 PaddleOCR...");
     global.__ocrLastProgressAt = Date.now();
@@ -2316,6 +2356,7 @@
             Math.max(prepared.ssqStrips.length || 0, 5)
           )
         : ocrResult.lines;
+    const previewUrl = prepared.previewUrl;
     report(100, "识别完成");
 
     return {
@@ -2323,8 +2364,11 @@
       lines: lines,
       detectedType: detectedType,
       activeType: activeType,
-      previewUrl: prepared.previewUrl,
+      previewUrl: previewUrl,
     };
+    } finally {
+      releasePreparedImages(prepared);
+    }
   }
 
   global.LotteryOcr = {
