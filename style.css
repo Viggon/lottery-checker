@@ -799,6 +799,12 @@ textarea {
   text-align: center;
 }
 
+.draw-fuyun-tag-unknown {
+  color: #6b7280;
+  background: linear-gradient(135deg, #f9fafb, #f3f4f6);
+  border-color: #d1d5db;
+}
+
 .next-draw-meta {
   display: flex;
   justify-content: space-between;
@@ -956,6 +962,10 @@ textarea {
   font-weight: 700;
 }
 
+.prize.maybe {
+  color: #b45309;
+}
+
 .prize-money {
   margin-top: 8px;
   font-size: 1.15rem;
@@ -976,6 +986,12 @@ textarea {
   color: var(--muted);
   font-size: 0.88rem;
   font-weight: 600;
+}
+
+.prize-money.unknown {
+  color: #b45309;
+  font-size: 0.9rem;
+  font-weight: 700;
 }
 
 .result-summary {

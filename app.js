@@ -1,4 +1,4 @@
-const APP_VERSION = "1.8.5";
+const APP_VERSION = "1.8.6";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -69,15 +69,23 @@ const LOTTERY = {
       } else if (blueHit && redHit <= 2) {
         level = 6;
         name = "六等奖";
-      } else if (redHit === 3 && !blueHit && isSsqFuyunActive(draw)) {
-        level = SSQ_FUYUN_LEVEL;
-        name = "福运奖";
+      } else if (redHit === 3 && !blueHit) {
+        const fuyunStatus = getSsqFuyunStatus(draw);
+        if (fuyunStatus === "active") {
+          level = SSQ_FUYUN_LEVEL;
+          name = "福运奖";
+        } else if (fuyunStatus === "unknown") {
+          name = "福运奖待确认";
+        }
       }
+      const fuyunStatusForTicket =
+        redHit === 3 && !blueHit ? getSsqFuyunStatus(draw) : "none";
       return {
         level,
         name,
         detail: `红球中 ${redHit} 个，蓝球${blueHit ? "中" : "未中"}`,
         hits: { red: matched.drawHits, blue: blueHit ? [ticket.blue] : [] },
+        fuyunUnknown: fuyunStatusForTicket === "unknown",
       };
     },
     renderDraw(draw) {
@@ -429,14 +437,18 @@ function parseIssueNumber(issue) {
   return parseInt(String(issue || ""), 10) || 0;
 }
 
-function isSsqFuyunActive(draw) {
-  if (!draw) return false;
-  if (parseIssueNumber(draw.issue) < SSQ_FUYUN_ISSUE_START) return false;
-  if (draw.fyjCount > 0 || draw.fyjMoney > 0) return true;
+function getSsqFuyunStatus(draw) {
+  if (!draw) return "none";
+  if (parseIssueNumber(draw.issue) < SSQ_FUYUN_ISSUE_START) return "none";
+  if (draw.fyjCount > 0 || draw.fyjMoney > 0) return "active";
   if (draw.poolMoney != null && !Number.isNaN(draw.poolMoney)) {
-    return draw.poolMoney >= SSQ_FUYUN_POOL_STOP;
+    return draw.poolMoney >= SSQ_FUYUN_POOL_STOP ? "active" : "inactive";
   }
-  return true;
+  return "unknown";
+}
+
+function isSsqFuyunActive(draw) {
+  return getSsqFuyunStatus(draw) === "active";
 }
 
 function formatMoney(amount, floating) {
@@ -1484,8 +1496,14 @@ async function fetchDraws() {
 function renderDraw(draw) {
   const cfg = LOTTERY[state.type];
   let fuyunHint = "";
-  if (state.type === "ssq" && isSsqFuyunActive(draw)) {
-    fuyunHint = '<span class="draw-fuyun-tag">福运奖进行中（3+0 得 5 元）</span>';
+  if (state.type === "ssq") {
+    const fuyunStatus = getSsqFuyunStatus(draw);
+    if (fuyunStatus === "active") {
+      fuyunHint = '<span class="draw-fuyun-tag">福运奖进行中（3+0 得 5 元）</span>';
+    } else if (fuyunStatus === "unknown") {
+      fuyunHint =
+        '<span class="draw-fuyun-tag draw-fuyun-tag-unknown">福运奖状态未知，请查福彩官网</span>';
+    }
   }
   els.drawMeta.innerHTML = `
     <span>第 <strong>${draw.issue}</strong> 期</span>
@@ -1515,6 +1533,7 @@ function compareNumbers(lines) {
   let winCount = 0;
   let totalFixed = 0;
   let hasFloating = false;
+  let hasFuyunUnknown = false;
 
   const html = ticketLines
     .map((line, index) => {
@@ -1522,10 +1541,18 @@ function compareNumbers(lines) {
         const ticket = cfg.parse(line);
         const result = cfg.check(ticket, state.currentDraw);
         const prize = resolvePrizeAmount(state.type, result, state.currentDraw);
-        const winClass =
+        let winClass =
           result.level > 0 && (prize.amount > 0 || prize.floating) ? "win" : "lose";
+        let prizeText = prize.text;
+        let moneyClass =
+          prize.amount > 0 ? "prize-money win" : prize.floating ? "prize-money floating" : "prize-money lose";
 
-        if (result.level > 0 && prize.amount > 0) {
+        if (result.fuyunUnknown) {
+          hasFuyunUnknown = true;
+          winClass = "maybe";
+          moneyClass = "prize-money unknown";
+          prizeText = "福运奖状态未知（3+0 可能 5 元），请查福彩官网";
+        } else if (result.level > 0 && prize.amount > 0) {
           winCount += 1;
           totalFixed += prize.amount;
         } else if (result.level > 0 && prize.floating) {
@@ -1533,12 +1560,10 @@ function compareNumbers(lines) {
           hasFloating = true;
         }
 
-        const moneyClass = prize.amount > 0 ? "prize-money win" : prize.floating ? "prize-money floating" : "prize-money lose";
-
         return `
           <div class="result-item">
             <div class="prize ${winClass}">${result.name}<span class="tag">${result.detail}</span></div>
-            <div class="${moneyClass}">单注奖金：${escapeHtml(prize.text)}</div>
+            <div class="${moneyClass}">单注奖金：${escapeHtml(prizeText)}</div>
             <div class="balls result-balls">${cfg.renderTicket(ticket, result.hits)}</div>
           </div>
         `;
@@ -1559,7 +1584,10 @@ function compareNumbers(lines) {
   if (hasFloating) {
     summary += totalFixed > 0 ? "；含浮动奖级，请以官方公告为准" : "；含浮动奖级，请以官方公告为准";
   }
-  if (winCount === 0) {
+  if (hasFuyunUnknown) {
+    summary += "；有福运奖待确认注，请查福彩官网";
+  }
+  if (winCount === 0 && !hasFuyunUnknown) {
     summary += "，未中奖";
   }
 
