@@ -1,4 +1,4 @@
-const APP_VERSION = "1.8.8";
+const APP_VERSION = "1.9.0";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -8,6 +8,7 @@ const OCR_CLOUD_STALL_MS = 120000;
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const CWL_API = "https://www.cwl.gov.cn/cwl_admin/front/cwlkj/search/kjxx/findDrawNotice";
+const CWL_PROXY_API = ""; // 运行 cwl-proxy/deploy.ps1 后自动填入 Worker 地址
 const CWL_NAME_MAP = { ssq: "ssq", fcsd: "3d", qlc: "qlc", klb: "kl8" };
 const SSQ_FUYUN_ISSUE_START = 2026014;
 const SSQ_FUYUN_POOL_STOP = 300000000;
@@ -449,6 +450,17 @@ function getSsqFuyunStatus(draw) {
 
 function isSsqFuyunActive(draw) {
   return getSsqFuyunStatus(draw) === "active";
+}
+
+function formatPoolMoney(amount) {
+  if (amount == null || Number.isNaN(amount) || amount <= 0) return "";
+  const yi = amount / 100000000;
+  if (yi >= 1) {
+    const text = yi >= 10 ? yi.toFixed(1) : yi.toFixed(2);
+    return text.replace(/\.0+$/, "").replace(/(\.\d)0$/, "$1") + " 亿元";
+  }
+  const wan = amount / 10000;
+  return Math.round(wan).toLocaleString("zh-CN") + " 万元";
 }
 
 function formatMoney(amount, floating) {
@@ -1413,19 +1425,11 @@ async function enrichDrawsWithCwlPrizes(type, draws) {
   if (type !== "ssq") return draws;
 
   try {
-    let payload = null;
-    const isLocal =
-      location.hostname === "127.0.0.1" || location.hostname === "localhost";
-    if (isLocal) {
-      const resp = await fetch(
-        `/api/lottery?type=${encodeURIComponent(type)}&limit=20&source=cwl`
-      );
-      payload = await resp.json();
-      if (!resp.ok || payload.error) payload = null;
-    } else {
-      payload = await fetchCwlOnline(type, 20);
+    const payload = await fetchCwlPayload(type, 20);
+    if (!payload) {
+      pushOcrDiag("cwl enrich skipped: no payload");
+      return draws;
     }
-    if (!payload) return draws;
 
     const cwlDraws = parseDrawList(payload, type);
     const cwlMap = {};
@@ -1433,9 +1437,11 @@ async function enrichDrawsWithCwlPrizes(type, draws) {
       cwlMap[String(draw.issue)] = draw;
     });
 
-    return draws.map(function (draw) {
+    let enrichedCount = 0;
+    const merged = draws.map(function (draw) {
       const cwl = cwlMap[String(draw.issue)];
       if (!cwl) return draw;
+      enrichedCount += 1;
       return Object.assign({}, draw, {
         poolMoney: cwl.poolMoney != null ? cwl.poolMoney : draw.poolMoney,
         fyjCount: cwl.fyjCount != null ? cwl.fyjCount : draw.fyjCount,
@@ -1443,23 +1449,45 @@ async function enrichDrawsWithCwlPrizes(type, draws) {
         prizeGrades: Object.assign({}, draw.prizeGrades || {}, cwl.prizeGrades || {}),
       });
     });
-  } catch (_) {
+    pushOcrDiag("cwl enrich ok: " + enrichedCount + "/" + draws.length);
+    return merged;
+  } catch (err) {
+    pushOcrDiag("cwl enrich failed: " + (err && err.message ? err.message : "unknown"));
     return draws;
   }
+}
+
+async function fetchCwlPayload(type, limit) {
+  const isLocal =
+    location.hostname === "127.0.0.1" || location.hostname === "localhost";
+  if (isLocal) {
+    const resp = await fetch(
+      "/api/lottery?type=" +
+        encodeURIComponent(type) +
+        "&limit=" +
+        encodeURIComponent(limit) +
+        "&source=cwl"
+    );
+    const payload = await resp.json();
+    if (!resp.ok || payload.error) return null;
+    return payload;
+  }
+  return fetchCwlOnline(type, limit);
 }
 
 async function fetchCwlOnline(type, limit) {
   const name = CWL_NAME_MAP[type];
   if (!name) return null;
-  const url =
-    CWL_API +
-    "?" +
-    new URLSearchParams({
-      name: name,
-      pageNo: "1",
-      pageSize: String(Math.max(1, Math.min(limit, 30))),
-      systemType: "PC",
-    }).toString();
+  const params = new URLSearchParams({
+    name: name,
+    pageNo: "1",
+    pageSize: String(Math.max(1, Math.min(limit, 30))),
+    systemType: "PC",
+  });
+  const proxyUrl = String(CWL_PROXY_API || "").trim().replace(/\/$/, "");
+  const url = proxyUrl
+    ? proxyUrl + "?" + params.toString()
+    : CWL_API + "?" + params.toString();
   const resp = await fetchWithTimeout(
     url,
     { cache: "no-store", headers: { Accept: "application/json" } },
@@ -1467,7 +1495,8 @@ async function fetchCwlOnline(type, limit) {
   );
   if (!resp.ok) return null;
   const data = await resp.json();
-  if (data.state !== 0) return null;
+  if (data.state !== 0 && data.state !== undefined) return null;
+  if (data.error) return null;
   return { source: "中国福利彩票官网", data: data };
 }
 
@@ -1546,18 +1575,28 @@ async function fetchDraws() {
 function renderDraw(draw) {
   const cfg = LOTTERY[state.type];
   let fuyunHint = "";
+  let poolHint = "";
   if (state.type === "ssq") {
     const fuyunStatus = getSsqFuyunStatus(draw);
+    if (draw.poolMoney > 0) {
+      poolHint =
+        '<span class="draw-pool-tag">奖池 ' +
+        escapeHtml(formatPoolMoney(draw.poolMoney)) +
+        "</span>";
+    }
     if (fuyunStatus === "active") {
       fuyunHint = '<span class="draw-fuyun-tag">福运奖进行中（3+0 得 5 元）</span>';
     } else if (fuyunStatus === "unknown") {
       fuyunHint =
         '<span class="draw-fuyun-tag draw-fuyun-tag-unknown">福运奖状态未知，请查福彩官网</span>';
+    } else if (fuyunStatus === "inactive") {
+      fuyunHint = '<span class="draw-fuyun-tag draw-fuyun-tag-unknown">本期未执行福运奖</span>';
     }
   }
   els.drawMeta.innerHTML = `
     <span>第 <strong>${draw.issue}</strong> 期</span>
     <span>${draw.date || ""}</span>
+    ${poolHint}
     ${fuyunHint}
   `;
   els.drawBalls.innerHTML = cfg.renderDraw(draw);

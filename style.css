@@ -877,6 +877,18 @@ textarea {
   border-color: #d1d5db;
 }
 
+.draw-pool-tag {
+  flex: 1 1 100%;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #7c3aed;
+  background: linear-gradient(135deg, #f5f3ff, #ede9fe);
+  border: 1px solid #c4b5fd;
+  border-radius: 999px;
+  padding: 4px 10px;
+  text-align: center;
+}
+
 .next-draw-meta {
   display: flex;
   justify-content: space-between;
