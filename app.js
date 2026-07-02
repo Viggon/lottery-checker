@@ -1,8 +1,9 @@
-const APP_VERSION = "1.6.9";
+const APP_VERSION = "1.7.0";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
 const OCR_TOTAL_TIMEOUT_MS_DESKTOP = 120000;
+const OCR_CLOUD_TIMEOUT_MS = 180000;
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const FETCH_TIMEOUT_MS = 15000;
@@ -501,8 +502,18 @@ function isEdgeBrowser() {
 }
 
 function getOcrStallMs() {
+  if (window.LotteryOcr && window.LotteryOcr.prefersHelloLotteryApi()) {
+    return 45000;
+  }
   if (isEdgeBrowser()) return OCR_STALL_MS_EDGE;
   return isMobileDevice() ? OCR_STALL_MS_MOBILE : OCR_STALL_MS_DESKTOP;
+}
+
+function getOcrWatchdogMs() {
+  if (window.LotteryOcr && window.LotteryOcr.prefersHelloLotteryApi()) {
+    return OCR_CLOUD_TIMEOUT_MS;
+  }
+  return isMobileDevice() ? OCR_WATCHDOG_MS_MOBILE : OCR_WATCHDOG_MS_DESKTOP;
 }
 
 async function disposeOcrEngineSafely() {
@@ -517,7 +528,7 @@ async function disposeOcrEngineSafely() {
 
 function startOcrWatchdog() {
   stopOcrWatchdog();
-  const ms = isMobileDevice() ? OCR_WATCHDOG_MS_MOBILE : OCR_WATCHDOG_MS_DESKTOP;
+  const ms = getOcrWatchdogMs();
   pushOcrDiag("watchdog start " + ms + "ms iframe");
   if (window.LotteryOcrWatchdog) {
     window.LotteryOcrWatchdog.start(ms, {
@@ -559,9 +570,13 @@ function startMainStallMonitor() {
 }
 
 function withOcrTimeout(promise) {
-  const ms = isMobileDevice()
-    ? OCR_TOTAL_TIMEOUT_MS_MOBILE
-    : OCR_TOTAL_TIMEOUT_MS_DESKTOP;
+  const useCloud =
+    window.LotteryOcr && window.LotteryOcr.prefersHelloLotteryApi();
+  const ms = useCloud
+    ? OCR_CLOUD_TIMEOUT_MS
+    : isMobileDevice()
+      ? OCR_TOTAL_TIMEOUT_MS_MOBILE
+      : OCR_TOTAL_TIMEOUT_MS_DESKTOP;
   return Promise.race([
     promise,
     new Promise(function (_, reject) {
@@ -876,13 +891,17 @@ async function handleOcrFile(file) {
   window.__ocrLastProgressAt = Date.now();
   window.__ocrLastProgressMsg = "准备识别";
   pushOcrDiag("scan start " + file.name + " " + file.size + "b");
-  if (isEdgeBrowser()) {
+  if (window.LotteryOcr && window.LotteryOcr.prefersHelloLotteryApi()) {
+    pushOcrDiag("ocr mode: hello-lottery cloud api");
+  } else if (isEdgeBrowser()) {
     pushOcrDiag("edge low-memory mode");
   }
   setOcrStatus(
-    isEdgeBrowser()
-      ? "Edge 模式：加载 OCR（逐行识别，请勿切换标签页）..."
-      : "准备识别...",
+    window.LotteryOcr && window.LotteryOcr.prefersHelloLotteryApi()
+      ? "准备云端识别（HelloLottery，免费；照片会上传至 Hugging Face）..."
+      : isEdgeBrowser()
+        ? "Edge 模式：加载 OCR（逐行识别，请勿切换标签页）..."
+        : "准备识别...",
     false,
     0
   );
@@ -909,6 +928,10 @@ async function handleOcrFile(file) {
     if (result.detectedType && result.detectedType !== els.lotteryType.value) {
       els.lotteryType.value = result.detectedType;
       onTypeChange();
+    }
+
+    if (result.ocrSource === "hello-lottery-api") {
+      pushOcrDiag("ocr source: hello-lottery cloud");
     }
 
     if (!result.lines.length) {

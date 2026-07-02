@@ -2709,9 +2709,66 @@
     return parsed;
   }
 
+  function prefersHelloLotteryApi() {
+    if (!global.HelloLotteryApi || global.HelloLotteryApi.enabled === false) {
+      return false;
+    }
+    return typeof global.HelloLotteryApi.recognizeImage === "function";
+  }
+
+  async function recognizeViaHelloLotteryApi(file, lotteryType, onProgress) {
+    const report = makeProgressReporter(onProgress);
+    report(2, "使用 HelloLottery 云端识别...");
+    const rawText = await global.HelloLotteryApi.recognizeImage(file, function (
+      message,
+      percent
+    ) {
+      report(percent != null ? percent : 50, message);
+    });
+    const previewUrl = URL.createObjectURL(file);
+    const detectedType = detectLotteryType(rawText);
+    const activeType = detectedType || lotteryType;
+    let lines = parseTextToLines(rawText, activeType);
+
+    if (activeType === "ssq") {
+      const expected = inferSsqBetCountFromText(rawText);
+      parseSsqNumberProcess(rawText.split(/\n+/)).forEach(function (line) {
+        if (lines.indexOf(line) === -1) lines.push(line);
+      });
+      if (lines.length > expected && expected > 0) {
+        lines = lines.slice(0, expected);
+      }
+    }
+
+    report(100, "识别完成");
+    return {
+      rawText: rawText,
+      lines: lines,
+      detectedType: detectedType,
+      activeType: activeType,
+      previewUrl: previewUrl,
+      ocrSource: "hello-lottery-api",
+    };
+  }
+
   async function recognizeLotteryImage(file, lotteryType, onProgress) {
     if (!file) throw new Error("请先选择或拍摄照片");
     if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
+
+    if (prefersHelloLotteryApi()) {
+      try {
+        return await recognizeViaHelloLotteryApi(file, lotteryType, onProgress);
+      } catch (cloudErr) {
+        const cloudMsg = (cloudErr && cloudErr.message) || String(cloudErr || "云端失败");
+        if (global.__lotteryOcrDiag) {
+          global.__lotteryOcrDiag.push(
+            new Date().toISOString().slice(11, 19) + " cloud fail: " + cloudMsg
+          );
+        }
+        const report = makeProgressReporter(onProgress);
+        report(6, "云端识别失败，改用本机 OCR...");
+      }
+    }
 
     const report = makeProgressReporter(onProgress);
     let prepared = null;
@@ -2840,5 +2897,6 @@
     parseTextToLines: parseTextToLines,
     detectLotteryType: detectLotteryType,
     resetEngine: resetOcrEngine,
+    prefersHelloLotteryApi: prefersHelloLotteryApi,
   };
 })(window);

@@ -147,7 +147,7 @@
           <span class="card-icon">📷</span>
           <h2>拍照识别</h2>
         </div>
-        <p class="hint">对准号码区，尽量拍全票面；也可从相册选已有照片。首次识别需在线加载 OCR（约 30MB）。<strong>Edge 使用逐行精简模式</strong>；识别前请关闭其他标签页，每次只识别一张，等结果出来再拍下一张。</p>
+        <p class="hint">对准号码区，尽量拍全票面；也可从相册选已有照片。<strong>优先使用 HelloLottery 云端识别</strong>（免费，与官方演示同款模型；照片会上传至 Hugging Face 服务器）。若云端失败会自动改用本机 OCR。Space 休眠时首次识别可能需等待 1～2 分钟。</p>
         <div class="scan-actions">
           <label class="scan-btn">
             <input
@@ -257,6 +257,7 @@
         LotteryOcrWatchdog.startPermanentMonitor(isMobile ? 8000 : 15000);
       }
     </script>
+    <script src="./hello-lottery-api.js"></script>
     <script src="./ocr.js"></script>
     <script src="./app.js"></script>
   </body>
