@@ -661,6 +661,93 @@
     return SSQ_LAYOUT.defaultRows;
   }
 
+  const HELLO_LOTTERY_BET_HEADER = /^[①②③④⑤⑥⑦⑧⑨⑩][：:]/u;
+
+  function isHelloLotteryHeaderLine(row) {
+    return /^(彩票类型|开奖期|开奖号码|玩法)[：:]/u.test(String(row || "").trim());
+  }
+
+  function isHelloLotteryComplexLine(row) {
+    return /^(红胆|红拖|蓝单|蓝复|前区胆|前区拖|后区胆|后区拖)[：:]/u.test(
+      String(row || "").trim()
+    );
+  }
+
+  function extractHelloLotteryWinningLine(rawText) {
+    const match = String(rawText || "").match(/开奖号码[：:]\s*(.+?)(?:\n|$)/u);
+    if (!match) return null;
+    return parseSsqLineFromChunk(match[1].trim());
+  }
+
+  function parseHelloLotteryBetNumberPart(row) {
+    const trimmed = String(row || "").trim();
+    const headerMatch = trimmed.match(/^[①②③④⑤⑥⑦⑧⑨⑩][：:]\s*(.+)$/u);
+    if (!headerMatch) return null;
+    let body = headerMatch[1].trim();
+    body = body.replace(/\s*\(中\s*\d+\s*\+\s*\d+\s*\)\s*$/u, "");
+    body = body.replace(/\s*\(中\s*\d+\s*\)\s*$/u, "");
+    return parseSsqLineFromChunk(body);
+  }
+
+  function inferHelloLotteryBetCount(rawText) {
+    const rows = String(rawText || "").split(/\n+/);
+    let count = 0;
+    rows.forEach(function (row) {
+      if (HELLO_LOTTERY_BET_HEADER.test(String(row || "").trim())) {
+        count += 1;
+      }
+    });
+    if (count > 0) return count;
+    return inferSsqBetCountFromText(rawText);
+  }
+
+  function parseHelloLotterySsqLines(rawText) {
+    const rows = String(rawText || "")
+      .split(/\n+/)
+      .map(function (line) {
+        return line.trim();
+      })
+      .filter(Boolean);
+    const winningLine = extractHelloLotteryWinningLine(rawText);
+    const lines = [];
+
+    rows.forEach(function (row) {
+      if (isHelloLotteryHeaderLine(row)) return;
+      if (isHelloLotteryComplexLine(row)) return;
+      if (!HELLO_LOTTERY_BET_HEADER.test(row)) return;
+      const parsed = parseHelloLotteryBetNumberPart(row);
+      if (!parsed) return;
+      if (winningLine && parsed === winningLine) return;
+      if (lines.indexOf(parsed) === -1) lines.push(parsed);
+    });
+
+    if (lines.length) return lines;
+
+    const filtered = rows.filter(function (row) {
+      if (isHelloLotteryHeaderLine(row)) return false;
+      if (isHelloLotteryComplexLine(row)) return false;
+      if (/^开奖号码/u.test(row)) return false;
+      if (/中奖|奖金|浮动/u.test(row)) return false;
+      return true;
+    });
+
+    parseSsqNumberProcess(filtered).forEach(function (line) {
+      if (winningLine && line === winningLine) return;
+      if (lines.indexOf(line) === -1) lines.push(line);
+    });
+
+    const expected = inferHelloLotteryBetCount(rawText);
+    if (expected > 0 && lines.length > expected) {
+      return lines
+        .filter(function (line) {
+          return !winningLine || line !== winningLine;
+        })
+        .slice(0, expected);
+    }
+
+    return lines;
+  }
+
   function collectSsqLinesFromStripResult(stripResult, expectedCount) {
     expectedCount = expectedCount || SSQ_LAYOUT.defaultRows;
     const rawLines = (stripResult.rawTextsByIndex || []).filter(function (t) {
@@ -2728,16 +2815,13 @@
     const previewUrl = URL.createObjectURL(file);
     const detectedType = detectLotteryType(rawText);
     const activeType = detectedType || lotteryType;
-    let lines = parseTextToLines(rawText, activeType);
+    let lines =
+      activeType === "ssq"
+        ? parseHelloLotterySsqLines(rawText)
+        : parseTextToLines(rawText, activeType);
 
-    if (activeType === "ssq") {
-      const expected = inferSsqBetCountFromText(rawText);
-      parseSsqNumberProcess(rawText.split(/\n+/)).forEach(function (line) {
-        if (lines.indexOf(line) === -1) lines.push(line);
-      });
-      if (lines.length > expected && expected > 0) {
-        lines = lines.slice(0, expected);
-      }
+    if (activeType === "ssq" && !lines.length) {
+      throw new Error("云端结果中未找到有效注单，请查看识别原文");
     }
 
     report(100, "识别完成");

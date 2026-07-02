@@ -7,7 +7,21 @@
   <body>
     <script>
       (function () {
-        var stallMs = 8000;
+        function getStallMs() {
+          try {
+            var p = parent;
+            if (p.__ocrStallMs > 0) return p.__ocrStallMs;
+            if (p.__ocrCloudStallMs > 0) return p.__ocrCloudStallMs;
+            if (
+              p.LotteryOcr &&
+              p.LotteryOcr.prefersHelloLotteryApi &&
+              p.LotteryOcr.prefersHelloLotteryApi()
+            ) {
+              return 120000;
+            }
+          } catch (e) {}
+          return 8000;
+        }
         function showOnParent(msg, log) {
           var p = parent;
           var d = p.document;
@@ -62,6 +76,7 @@
           try {
             var p = parent;
             if (!p.__ocrScanActive || p.__ocrErrorShown) return;
+            var stallMs = getStallMs();
             var stalled = Date.now() - (p.__ocrLastProgressAt || 0);
             if (stalled < stallMs) return;
             var stuckMsg = p.__ocrLastProgressMsg || "未知步骤";

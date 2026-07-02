@@ -1,9 +1,10 @@
-const APP_VERSION = "1.7.1";
+const APP_VERSION = "1.7.3";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
 const OCR_TOTAL_TIMEOUT_MS_DESKTOP = 120000;
-const OCR_CLOUD_TIMEOUT_MS = 180000;
+const OCR_CLOUD_TIMEOUT_MS = 240000;
+const OCR_CLOUD_STALL_MS = 120000;
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const FETCH_TIMEOUT_MS = 15000;
@@ -503,7 +504,7 @@ function isEdgeBrowser() {
 
 function getOcrStallMs() {
   if (window.LotteryOcr && window.LotteryOcr.prefersHelloLotteryApi()) {
-    return 45000;
+    return OCR_CLOUD_STALL_MS;
   }
   if (isEdgeBrowser()) return OCR_STALL_MS_EDGE;
   return isMobileDevice() ? OCR_STALL_MS_MOBILE : OCR_STALL_MS_DESKTOP;
@@ -873,6 +874,7 @@ async function handleOcrFile(file) {
   window.__ocrScanActive = true;
   window.__ocrLastProgressAt = Date.now();
   window.__ocrLastProgressMsg = "准备识别";
+  window.__ocrStallMs = getOcrStallMs();
   pushOcrDiag("scan start " + file.name + " " + file.size + "b");
   if (window.LotteryOcr && window.LotteryOcr.prefersHelloLotteryApi()) {
     pushOcrDiag("ocr mode: hello-lottery cloud api");
@@ -1301,3 +1303,6 @@ if (els.appVersion) {
   els.appVersion.textContent = "v" + APP_VERSION;
 }
 fetchDraws();
+if (window.LotteryOcrWatchdog) {
+  window.LotteryOcrWatchdog.startPermanentMonitor(getOcrStallMs());
+}

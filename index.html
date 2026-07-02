@@ -250,12 +250,7 @@
         new Date().toISOString().slice(11, 19) + " page ready"
       );
       document.body.style.overflow = "";
-      if (window.LotteryOcrWatchdog) {
-        var isMobile = /Android|iPhone|iPad|iPod|Mobi/i.test(
-          navigator.userAgent || ""
-        );
-        LotteryOcrWatchdog.startPermanentMonitor(isMobile ? 8000 : 15000);
-      }
+      window.__ocrCloudStallMs = 120000;
     </script>
     <script src="./hello-lottery-api.js"></script>
     <script src="./ocr.js"></script>

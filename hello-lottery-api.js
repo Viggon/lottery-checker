@@ -3,7 +3,7 @@
 
   const SPACE_URL = "https://wushidiguo2-hellolottery.hf.space";
   const UPLOAD_TIMEOUT_MS = 60000;
-  const RESULT_TIMEOUT_MS = 180000;
+  const RESULT_TIMEOUT_MS = 240000;
 
   function sleep(ms) {
     return new Promise(function (resolve) {
@@ -122,29 +122,42 @@
       attempt += 1;
       const waitedSec = Math.round((Date.now() - started) / 1000);
       const percent = Math.min(92, 20 + Math.round(waitedSec * 1.2));
-      report(
-        onProgress,
-        percent,
+      const msg =
         attempt === 1
           ? "云端识别中（Space 休眠时首次可能需 1～2 分钟）..."
-          : "云端识别中（已等待 " + waitedSec + " 秒）..."
-      );
+          : "云端识别中（已等待 " + waitedSec + " 秒）...";
+      report(onProgress, percent, msg);
 
-      const res = await fetchWithTimeout(
-        SPACE_URL + "/call/predict/" + encodeURIComponent(eventId),
-        { method: "GET", headers: { Accept: "text/event-stream" } },
-        Math.min(90000, RESULT_TIMEOUT_MS - (Date.now() - started))
-      );
-      const text = await res.text();
+      const remaining = RESULT_TIMEOUT_MS - (Date.now() - started);
+      const fetchTimeout = Math.min(90000, remaining);
+      let heartbeat = setInterval(function () {
+        const sec = Math.round((Date.now() - started) / 1000);
+        report(
+          onProgress,
+          Math.min(92, 20 + Math.round(sec * 1.2)),
+          "云端识别中（已等待 " + sec + " 秒）..."
+        );
+      }, 3000);
 
-      if (/event:\s*error/i.test(text)) {
-        throw new Error(parseSseBody(text));
-      }
-      if (/event:\s*complete/i.test(text) || /data:\s*\["/.test(text)) {
-        return parseSseBody(text);
-      }
-      if (!res.ok) {
-        throw new Error("获取云端结果失败（HTTP " + res.status + "）");
+      try {
+        const res = await fetchWithTimeout(
+          SPACE_URL + "/call/predict/" + encodeURIComponent(eventId),
+          { method: "GET", headers: { Accept: "text/event-stream" } },
+          fetchTimeout
+        );
+        const text = await res.text();
+
+        if (/event:\s*error/i.test(text)) {
+          throw new Error(parseSseBody(text));
+        }
+        if (/event:\s*complete/i.test(text) || /data:\s*\["/.test(text)) {
+          return parseSseBody(text);
+        }
+        if (!res.ok) {
+          throw new Error("获取云端结果失败（HTTP " + res.status + "）");
+        }
+      } finally {
+        clearInterval(heartbeat);
       }
 
       await sleep(600);
