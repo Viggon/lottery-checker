@@ -558,6 +558,128 @@
     return parseSsqFromStream(text);
   }
 
+  function matchFillDigits(text) {
+    const matched = [];
+    const src = String(text || "");
+    const re = /\d+/g;
+    let m = re.exec(src);
+    while (m) {
+      matched.push(normalize2(m[0]));
+      m = re.exec(src);
+    }
+    return matched;
+  }
+
+  function stripSsqLinePrefix(line) {
+    return String(line || "")
+      .trim()
+      .replace(/^[①②③④⑤⑥⑦⑧⑨⑩]\s*/u, "")
+      .replace(/^[A-Za-z]\s*[).、:]\s*/u, "")
+      .replace(/^1\)\s*/u, "")
+      .replace(/^\d{1,2}[).、:]\s*/, function (head) {
+        return /^\d\)/.test(head) ? "" : head;
+      })
+      .trim();
+  }
+
+  function ssqLineFromMatchedDigits(matched) {
+    if (!matched || matched.length < 7) return null;
+    return finalizeSsqLine(matched.slice(0, 6), matched[6]);
+  }
+
+  function parseSsqNumberProcess(ocrLines) {
+    const lines = (ocrLines || [])
+      .map(function (line) {
+        return String(line || "").trim();
+      })
+      .filter(Boolean);
+    if (!lines.length) return [];
+
+    const first = lines[0];
+    const out = [];
+
+    if (/^[①②③④⑤⑥⑦⑧⑨⑩A1]/.test(first) || /^1\)/.test(first)) {
+      lines.forEach(function (line) {
+        const cleaned = stripSsqLinePrefix(line);
+        const built = ssqLineFromMatchedDigits(matchFillDigits(cleaned));
+        if (built) out.push(built);
+      });
+      if (out.length) return uniqueKeepOrder(out);
+    }
+
+    lines.forEach(function (line) {
+      if (isSsqMetadataLine(line)) return;
+      const direct = parseSsqLineFromChunk(stripSsqLinePrefix(line));
+      if (direct) out.push(direct);
+    });
+    if (out.length >= 3) return uniqueKeepOrder(out);
+
+    const joined = lines
+      .filter(function (line) {
+        return !isSsqMetadataLine(line);
+      })
+      .join("")
+      .replace(/\*\d+$/g, "")
+      .replace(/\(.*?\)/g, "");
+    const matched = matchFillDigits(joined);
+    if (matched.length === 7) {
+      const single = ssqLineFromMatchedDigits(matched);
+      return single ? [single] : [];
+    }
+    if (matched.length > 7) {
+      const stream = parseSsqFromStream(matched.join(" "));
+      if (stream.length) return stream;
+      const connectors = ["-", "+", "*"];
+      for (let i = 0; i < connectors.length; i += 1) {
+        const con = connectors[i];
+        if (joined.indexOf(con) === -1 || joined.split(con).length !== 2) continue;
+        const parts = joined.split(con);
+        const reds = matchFillDigits(parts[0]).filter(function (n) {
+          return inRange(n, 1, 33);
+        });
+        const blues = matchFillDigits(parts[1]).filter(function (n) {
+          return inRange(n, 1, 16);
+        });
+        if (reds.length >= 6 && blues.length >= 1) {
+          const built = finalizeSsqLine(reds.slice(0, 6), blues[0]);
+          if (built) return [built];
+        }
+      }
+    }
+
+    return uniqueKeepOrder(out.length ? out : parseSsqFromStream(joined));
+  }
+
+  function inferSsqBetCountFromText(text) {
+    const amountMatch = String(text || "").match(/金额[：:\s]*([\d.]+)\s*元/);
+    if (amountMatch) {
+      const yuan = parseFloat(amountMatch[1]);
+      if (yuan >= 2 && !isNaN(yuan)) {
+        return Math.min(5, Math.max(1, Math.round(yuan / 2)));
+      }
+    }
+    return SSQ_LAYOUT.defaultRows;
+  }
+
+  function collectSsqLinesFromStripResult(stripResult, expectedCount) {
+    expectedCount = expectedCount || SSQ_LAYOUT.defaultRows;
+    const rawLines = (stripResult.rawTextsByIndex || []).filter(function (t) {
+      return t && String(t).trim();
+    });
+    const fromProcess = parseSsqNumberProcess(rawLines);
+    const fromIndex = (stripResult.linesByIndex || []).filter(Boolean);
+
+    let lines = fromProcess.length >= fromIndex.length ? fromProcess : fromIndex;
+    if (fromProcess.length && fromIndex.length) {
+      lines = uniqueKeepOrder(fromProcess.concat(fromIndex));
+    }
+
+    if (lines.length >= expectedCount) {
+      return lines.slice(0, expectedCount);
+    }
+    return lines;
+  }
+
   function buildSsqTicket(nums, start) {
     for (let size = 7; size <= Math.min(10, nums.length - start); size += 1) {
       const slice = nums.slice(start, start + size);
@@ -1674,6 +1796,20 @@
     return out;
   }
 
+  function getSsqNumberBounds(base) {
+    if (isMobileLike()) {
+      const w = base.width;
+      const h = base.height;
+      return {
+        top: Math.round(h * SSQ_LAYOUT.fallbackTop),
+        bottom: Math.round(h * SSQ_LAYOUT.fallbackBottom),
+        left: Math.round(w * SSQ_LAYOUT.fallbackLeft),
+        right: Math.round(w * SSQ_LAYOUT.fallbackRight),
+      };
+    }
+    return findSsqNumberZoneBounds(base);
+  }
+
   function findSsqNumberZoneBounds(canvas) {
     const w = canvas.width;
     const h = canvas.height;
@@ -1926,7 +2062,7 @@
   }
 
   function extractSsqLayoutRowStrips(base) {
-    const bounds = findSsqNumberZoneBounds(base);
+    const bounds = getSsqNumberBounds(base);
     const rows = splitSsqRowsForTicket(base, bounds);
     const zoneWidth = bounds.right - bounds.left;
 
@@ -1998,27 +2134,34 @@
     const urls = strip.dataUrls || [strip.dataUrl];
     let best = null;
     let bestScore = -1;
+    let bestRaw = "";
 
     for (let u = 0; u < urls.length; u += 1) {
       const result = await recognizeDataUrl(urls[u]);
+      const rawText = result.text || "";
       const candidates = [];
-      const fromText = parseSsqStripText(result.text || "");
+      const fromText = parseSsqStripText(rawText);
       if (fromText) candidates.push(fromText);
       const fromItems = parseSsqStripFromItems(result.items || []);
       if (fromItems && candidates.indexOf(fromItems) === -1) {
         candidates.push(fromItems);
       }
+      const fromProcess = parseSsqNumberProcess([rawText]);
+      fromProcess.forEach(function (line) {
+        if (candidates.indexOf(line) === -1) candidates.push(line);
+      });
 
       for (let c = 0; c < candidates.length; c += 1) {
         const score = scoreSsqParsedLine(candidates[c]);
         if (score > bestScore) {
           bestScore = score;
           best = candidates[c];
+          bestRaw = rawText;
         }
       }
     }
 
-    return best;
+    return { line: best, rawText: bestRaw };
   }
 
   function parseSsqStripText(text) {
@@ -2397,18 +2540,20 @@
 
   async function runSsqStripOcr(strips, onPass) {
     if (!strips.length) {
-      return { lines: [], linesByIndex: [], votes: {} };
+      return { lines: [], linesByIndex: [], rawTextsByIndex: [], votes: {} };
     }
 
     const votes = {};
     const linesByIndex = [];
+    const rawTextsByIndex = [];
 
     for (let i = 0; i < strips.length; i += 1) {
-      const line = await recognizeSsqStripBest(strips[i]);
-      linesByIndex.push(line || null);
-      if (line) {
+      const best = await recognizeSsqStripBest(strips[i]);
+      linesByIndex.push(best.line || null);
+      rawTextsByIndex.push(best.rawText || "");
+      if (best.line) {
         const weight = strips[i].source === "layout" ? 4 : 3;
-        votes[line] = (votes[line] || 0) + weight;
+        votes[best.line] = (votes[best.line] || 0) + weight;
       }
       if (onPass) onPass(i + 1, strips.length);
       await yieldToMain();
@@ -2416,7 +2561,12 @@
 
     const lines = linesByIndex.filter(Boolean);
 
-    return { lines: lines, linesByIndex: linesByIndex, votes: votes };
+    return {
+      lines: lines,
+      linesByIndex: linesByIndex,
+      rawTextsByIndex: rawTextsByIndex,
+      votes: votes,
+    };
   }
 
   function ocrItemCenter(item) {
@@ -2490,8 +2640,21 @@
   }
 
   function parseSsqFromOcrResult(result) {
+    const rawText = (result && result.text) || "";
+    const lineRows = rawText
+      .split(/\n+/)
+      .map(function (line) {
+        return line.trim();
+      })
+      .filter(Boolean);
+
+    const fromProcess = parseSsqNumberProcess(lineRows);
+    if (fromProcess.length >= 3) {
+      return { lines: fromProcess.slice(0, 5), votes: {} };
+    }
+
     const texts = [];
-    if (result && result.text) texts.push(result.text);
+    if (rawText) texts.push(rawText);
 
     if (result && result.items && result.items.length) {
       groupOcrItemsByRow(result.items).forEach(function (rowText) {
@@ -2521,14 +2684,23 @@
     }
 
     const parsed = collectParsedLineVotes(texts, "ssq");
+    if (fromProcess.length) {
+      fromProcess.forEach(function (line) {
+        if (parsed.lines.indexOf(line) === -1) parsed.lines.push(line);
+      });
+    }
 
-    const stripped = stripSsqMetadataFromText((result && result.text) || "");
+    const stripped = stripSsqMetadataFromText(rawText);
+    parseSsqNumberProcess(stripped.split(/\n+/)).forEach(function (line) {
+      if (parsed.lines.indexOf(line) === -1) parsed.lines.push(line);
+    });
     parseSsqVerticalFragmentLines(stripped).forEach(function (line) {
-      parsed.votes[line] = (parsed.votes[line] || 0) + 3;
       if (parsed.lines.indexOf(line) === -1) parsed.lines.push(line);
     });
 
-    if (parsed.lines.length >= 4) return parsed;
+    if (parsed.lines.length >= 4) {
+      return { lines: parsed.lines.slice(0, 5), votes: parsed.votes };
+    }
 
     const streamLines = parseSsqLines(stripped);
     if (streamLines.length > parsed.lines.length) {
@@ -2553,7 +2725,7 @@
     await loadOcrEngine(report);
 
     if (prepared.edgeLite) {
-      let stripResult = { lines: [], linesByIndex: [], votes: {} };
+      let stripResult = { lines: [], linesByIndex: [], rawTextsByIndex: [], votes: {} };
       let stripRawText = "";
 
       if (lotteryType === "ssq" && prepared.ssqStrips.length) {
@@ -2565,14 +2737,12 @@
           report(percent, "逐行识别 " + done + "/" + total);
           global.__ocrLastProgressAt = Date.now();
         });
-        stripRawText = stripResult.lines.join("\n");
+        stripRawText = stripResult.rawTextsByIndex.filter(Boolean).join("\n");
       }
 
-      let lines = [];
-      for (let i = 0; i < stripResult.linesByIndex.length; i += 1) {
-        if (stripResult.linesByIndex[i]) lines.push(stripResult.linesByIndex[i]);
-      }
-      if (lotteryType === "ssq" && lines.length < 5 && prepared.variants.length) {
+      const expectedCount = inferSsqBetCountFromText(stripRawText);
+      let lines = collectSsqLinesFromStripResult(stripResult, expectedCount);
+      if (lotteryType === "ssq" && lines.length < expectedCount && prepared.variants.length) {
         report(86, "Edge 模式：补充整区识别...");
         global.__ocrLastProgressAt = Date.now();
         const zoneResult = await recognizeDataUrl(prepared.variants[0].dataUrl);
@@ -2595,7 +2765,7 @@
       };
     }
 
-    let stripResult = { lines: [], linesByIndex: [], votes: {} };
+    let stripResult = { lines: [], linesByIndex: [], rawTextsByIndex: [], votes: {} };
     let stripRawText = "";
     if (lotteryType === "ssq" && prepared.ssqStrips && prepared.ssqStrips.length) {
       report(40, "正在按票面排版识别号码...");
@@ -2603,7 +2773,13 @@
         const percent = 40 + Math.round((done / total) * 48);
         report(percent, "正在识别号码行 " + done + "/" + total);
       });
-      stripRawText = stripResult.lines.join("\n");
+      stripRawText = stripResult.rawTextsByIndex.filter(Boolean).join("\n");
+    }
+
+    const expectedCount = inferSsqBetCountFromText(stripRawText);
+    const stripLines = collectSsqLinesFromStripResult(stripResult, expectedCount);
+    if (stripLines.length) {
+      stripResult.lines = stripLines;
     }
 
     const ssqFastDone =
