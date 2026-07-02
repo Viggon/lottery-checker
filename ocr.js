@@ -393,7 +393,7 @@
     );
 
     const lines = [];
-    const plusRegex = /([^\n+]{8,120}?)\+([^\n]{0,20})/g;
+    const plusRegex = /([^\n+]{2,120}?)\+([^\n]{0,20})/g;
     let match = plusRegex.exec(prepared);
     while (match) {
       const built = tryBuildSsqLine(match[1], match[2]);
@@ -458,7 +458,10 @@
 
   function isSsqMetadataLine(chunk) {
     return (
-      /站号|流水|金额|销售|开奖|验票|贡献|福利|管理中心|玩法|复式|单式|倍数|期/.test(chunk) ||
+      /站号|流水|金额|销售|开奖|验票|贡献|福利|管理中心|玩法|复式|单式|倍数|期|色球|政色球/.test(
+        chunk
+      ) ||
+      /站\s*$|号\s*[:：]/.test(chunk) ||
       /^[A-F0-9-]{8,}/i.test(chunk.trim()) ||
       /^\d{4}\s*[\/年-]\s*\d{1,2}/.test(chunk.trim())
     );
@@ -1723,6 +1726,20 @@
     };
   }
 
+  function splitSsqRowsEqual(bounds) {
+    const zoneHeight = bounds.bottom - bounds.top;
+    const count = SSQ_LAYOUT.defaultRows;
+    const rowH = zoneHeight / count;
+    const equalRows = [];
+    for (let i = 0; i < count; i += 1) {
+      equalRows.push({
+        y: Math.round(i * rowH),
+        h: Math.round((i + 1) * rowH) - Math.round(i * rowH),
+      });
+    }
+    return equalRows;
+  }
+
   function splitSsqRowsInBounds(canvas, bounds) {
     const zoneHeight = bounds.bottom - bounds.top;
     const xStart = bounds.left;
@@ -1761,17 +1778,97 @@
       }
     }
 
-    if (rows.length >= 1 && rows.length <= 5) {
+    if (rows.length >= 4 && rows.length <= 5) {
       return rows;
     }
 
-    const count = SSQ_LAYOUT.defaultRows;
-    const rowH = zoneHeight / count;
-    const equalRows = [];
-    for (let i = 0; i < count; i += 1) {
-      equalRows.push({ y: Math.round(i * rowH), h: Math.round((i + 1) * rowH) - Math.round(i * rowH) });
+    return splitSsqRowsEqual(bounds);
+  }
+
+  function splitSsqRowsForTicket(canvas, bounds) {
+    if (isLowMemoryOcrMode()) {
+      return splitSsqRowsEqual(bounds);
     }
-    return equalRows;
+    return splitSsqRowsInBounds(canvas, bounds);
+  }
+
+  function stripSsqMetadataFromText(text) {
+    const rows = String(text || "")
+      .split(/\n+/)
+      .map(function (line) {
+        return line.trim();
+      })
+      .filter(Boolean);
+    let start = 0;
+    for (let i = 0; i < rows.length; i += 1) {
+      if (/销售时间|金额|倍数|开奖期/.test(rows[i])) {
+        start = i + 1;
+      }
+    }
+    return rows.slice(start).join("\n");
+  }
+
+  function parseSsqVerticalFragmentLines(text) {
+    const lines = [];
+    const rows = stripSsqMetadataFromText(text)
+      .split(/\n+/)
+      .map(function (line) {
+        return line.trim();
+      })
+      .filter(Boolean);
+    let bucket = [];
+
+    function flushPlusLine(plusLine) {
+      const cleaned = plusLine.replace(/\s+/g, "");
+      const parts = cleaned.split("+");
+      if (parts.length < 2) return;
+      const headNums = extractNumbers(parts[0]);
+      const all = bucket.concat(headNums);
+      bucket.length = 0;
+      const blue = blueFromToken(parts.slice(1).join(""));
+      if (!blue) return;
+
+      for (let start = all.length - 6; start >= 0; start -= 1) {
+        const reds = all.slice(start, start + 6);
+        if (reds.length < 6) continue;
+        const built = finalizeSsqLine(reds, blue);
+        if (built) {
+          lines.push(built);
+          return;
+        }
+      }
+
+      const built = buildSsqFromTokens(
+        all.map(function (n) {
+          return String(n);
+        }),
+        blue
+      );
+      if (built) lines.push(built);
+    }
+
+    rows.forEach(function (row) {
+      if (isSsqMetadataLine(row)) return;
+      if (/\+/.test(row)) {
+        flushPlusLine(row);
+        return;
+      }
+      const nums = extractNumbers(row);
+      if (!nums.length) return;
+      if (nums.length <= 3) {
+        bucket = bucket.concat(nums);
+        return;
+      }
+      const direct = parseSsqLineFromChunk(row);
+      if (direct) {
+        lines.push(direct);
+        bucket.length = 0;
+        return;
+      }
+      bucket = bucket.concat(nums);
+    });
+
+    return uniqueKeepOrder(lines);
   }
 
   function prepareSsqStripCanvas(source, sx, sy, sw, sh) {
@@ -1830,7 +1927,7 @@
 
   function extractSsqLayoutRowStrips(base) {
     const bounds = findSsqNumberZoneBounds(base);
-    const rows = splitSsqRowsInBounds(base, bounds);
+    const rows = splitSsqRowsForTicket(base, bounds);
     const zoneWidth = bounds.right - bounds.left;
 
     return rows
@@ -2424,9 +2521,16 @@
     }
 
     const parsed = collectParsedLineVotes(texts, "ssq");
-    if (parsed.lines.length >= 3) return parsed;
 
-    const streamLines = parseSsqLines((result && result.text) || "");
+    const stripped = stripSsqMetadataFromText((result && result.text) || "");
+    parseSsqVerticalFragmentLines(stripped).forEach(function (line) {
+      parsed.votes[line] = (parsed.votes[line] || 0) + 3;
+      if (parsed.lines.indexOf(line) === -1) parsed.lines.push(line);
+    });
+
+    if (parsed.lines.length >= 4) return parsed;
+
+    const streamLines = parseSsqLines(stripped);
     if (streamLines.length > parsed.lines.length) {
       return { lines: streamLines.slice(0, 5), votes: parsed.votes };
     }
@@ -2464,8 +2568,11 @@
         stripRawText = stripResult.lines.join("\n");
       }
 
-      let lines = stripResult.linesByIndex.filter(Boolean);
-      if (lotteryType === "ssq" && lines.length < 4 && prepared.variants.length) {
+      let lines = [];
+      for (let i = 0; i < stripResult.linesByIndex.length; i += 1) {
+        if (stripResult.linesByIndex[i]) lines.push(stripResult.linesByIndex[i]);
+      }
+      if (lotteryType === "ssq" && lines.length < 5 && prepared.variants.length) {
         report(86, "Edge 模式：补充整区识别...");
         global.__ocrLastProgressAt = Date.now();
         const zoneResult = await recognizeDataUrl(prepared.variants[0].dataUrl);
