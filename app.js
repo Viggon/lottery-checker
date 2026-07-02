@@ -1,4 +1,4 @@
-const APP_VERSION = "1.6.5";
+const APP_VERSION = "1.6.6";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -880,7 +880,9 @@ async function handleOcrFile(file) {
     pushOcrDiag("edge low-memory mode");
   }
   setOcrStatus(
-    isEdgeBrowser() ? "Edge 模式：准备识别（内存占用较高，请稍候）..." : "准备识别...",
+    isEdgeBrowser()
+      ? "Edge 精简模式：加载 OCR（请勿切换标签页）..."
+      : "准备识别...",
     false,
     0
   );
