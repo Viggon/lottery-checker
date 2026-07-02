@@ -877,6 +877,22 @@ textarea {
   border-color: #d1d5db;
 }
 
+.draw-fuyun-tag-link {
+  display: block;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.draw-fuyun-tag-link:active {
+  opacity: 0.92;
+}
+
+.prize-official-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .draw-pool-tag {
   flex: 1 1 100%;
   font-size: 0.78rem;

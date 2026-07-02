@@ -1,4 +1,4 @@
-const APP_VERSION = "1.9.2";
+const APP_VERSION = "1.9.3";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -7,6 +7,8 @@ const OCR_CLOUD_TIMEOUT_MS = 240000;
 const OCR_CLOUD_STALL_MS = 120000;
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
+const CWL_ORIGIN = "https://www.cwl.gov.cn";
+const CWL_SSQ_DRAW_LIST_URL = CWL_ORIGIN + "/ygkj/wqkjgg/ssq/";
 const SSQ_FUYUN_ISSUE_START = 2026014;
 const SSQ_FUYUN_POOL_STOP = 300000000;
 const SSQ_FUYUN_LEVEL = 7;
@@ -428,7 +430,31 @@ function parseDrawMoneyMeta(raw) {
   if (raw.fyjMoney != null && raw.fyjMoney !== "") {
     meta.fyjMoney = Number(raw.fyjMoney);
   }
+  if (raw.detailsLink) {
+    meta.cwlDetailsLink = String(raw.detailsLink);
+  }
   return meta;
+}
+
+function buildCwlSsqOfficialUrl(draw) {
+  if (draw && draw.cwlDetailsLink) {
+    const path = String(draw.cwlDetailsLink);
+    return path.indexOf("http") === 0 ? path : CWL_ORIGIN + path;
+  }
+  return CWL_SSQ_DRAW_LIST_URL;
+}
+
+function renderCwlOfficialLink(label, draw, className) {
+  const url = buildCwlSsqOfficialUrl(draw);
+  return (
+    '<a class="' +
+    className +
+    '" href="' +
+    escapeHtml(url) +
+    '" target="_blank" rel="noopener noreferrer">' +
+    escapeHtml(label) +
+    "</a>"
+  );
 }
 
 function parseIssueNumber(issue) {
@@ -1549,8 +1575,11 @@ function renderDraw(draw) {
     if (fuyunStatus === "active") {
       fuyunHint = '<span class="draw-fuyun-tag">福运奖进行中（3+0 得 5 元）</span>';
     } else if (fuyunStatus === "unknown") {
-      fuyunHint =
-        '<span class="draw-fuyun-tag draw-fuyun-tag-unknown">福运奖状态未知，请查福彩官网</span>';
+      fuyunHint = renderCwlOfficialLink(
+        "福运奖状态未知，点此查看福彩官网（奖池/福运奖）",
+        draw,
+        "draw-fuyun-tag draw-fuyun-tag-unknown draw-fuyun-tag-link"
+      );
     } else if (fuyunStatus === "inactive") {
       fuyunHint = '<span class="draw-fuyun-tag draw-fuyun-tag-unknown">本期未执行福运奖</span>';
     }
@@ -1597,12 +1626,19 @@ function compareNumbers(lines) {
         let prizeText = prize.text;
         let moneyClass =
           prize.amount > 0 ? "prize-money win" : prize.floating ? "prize-money floating" : "prize-money lose";
+        let prizeHtml = "单注奖金：" + escapeHtml(prizeText);
 
         if (result.fuyunUnknown) {
           hasFuyunUnknown = true;
           winClass = "maybe";
           moneyClass = "prize-money unknown";
-          prizeText = "福运奖状态未知（3+0 可能 5 元），请查福彩官网";
+          prizeHtml =
+            '单注奖金：' +
+            renderCwlOfficialLink(
+              "福运奖状态未知（3+0 可能 5 元），点此查看福彩官网",
+              state.currentDraw,
+              "prize-official-link"
+            );
         } else if (result.level > 0 && prize.amount > 0) {
           winCount += 1;
           totalFixed += prize.amount;
@@ -1614,7 +1650,7 @@ function compareNumbers(lines) {
         return `
           <div class="result-item">
             <div class="prize ${winClass}">${result.name}<span class="tag">${result.detail}</span></div>
-            <div class="${moneyClass}">单注奖金：${escapeHtml(prizeText)}</div>
+            <div class="${moneyClass}">${prizeHtml}</div>
             <div class="balls result-balls">${cfg.renderTicket(ticket, result.hits)}</div>
           </div>
         `;
