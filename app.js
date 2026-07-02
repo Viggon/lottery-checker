@@ -1,4 +1,4 @@
-const APP_VERSION = "1.7.0";
+const APP_VERSION = "1.7.1";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -653,7 +653,7 @@ function showOcrErrorDialog(err) {
 }
 
 function preloadOcrAssets() {
-  pushOcrDiag("preload start (lazy opencv)");
+  pushOcrDiag("preload: cloud-only, skip local paddle");
   if (window.LotteryOcrWatchdog) {
     window.LotteryOcrWatchdog.hideBootOverlay();
   }
@@ -662,23 +662,6 @@ function preloadOcrAssets() {
     boot.classList.add("hidden");
     boot.setAttribute("aria-hidden", "true");
     document.body.style.overflow = "";
-  }
-  if (isEdgeBrowser()) {
-    pushOcrDiag("edge: skip paddle preload to save memory");
-    return;
-  }
-  if (!window.__lotteryPaddlePreload) {
-    window.__lotteryPaddlePreload = true;
-    const paddleScript = document.createElement("script");
-    paddleScript.type = "module";
-    paddleScript.src = "./vendor/paddle-ocr.js";
-    paddleScript.onload = function () {
-      pushOcrDiag("preload paddle onload");
-    };
-    paddleScript.onerror = function () {
-      pushOcrDiag("preload paddle onerror");
-    };
-    document.head.appendChild(paddleScript);
   }
 }
 
@@ -896,15 +879,7 @@ async function handleOcrFile(file) {
   } else if (isEdgeBrowser()) {
     pushOcrDiag("edge low-memory mode");
   }
-  setOcrStatus(
-    window.LotteryOcr && window.LotteryOcr.prefersHelloLotteryApi()
-      ? "准备云端识别（HelloLottery，免费；照片会上传至 Hugging Face）..."
-      : isEdgeBrowser()
-        ? "Edge 模式：加载 OCR（逐行识别，请勿切换标签页）..."
-        : "准备识别...",
-    false,
-    0
-  );
+  setOcrStatus("准备云端识别（HelloLottery，免费；照片会上传至 Hugging Face）...", false, 0);
   els.ocrRawWrap.classList.add("hidden");
   startOcrWatchdog();
   startMainStallMonitor();
@@ -959,17 +934,12 @@ async function handleOcrFile(file) {
   } catch (err) {
     stopOcrWatchdog();
     stopMainStallMonitor();
-    await disposeOcrEngineSafely();
     showOcrErrorDialog(err);
   } finally {
     window.__ocrScanActive = false;
     stopMainStallMonitor();
     if (els.cameraInput) els.cameraInput.value = "";
     if (els.galleryInput) els.galleryInput.value = "";
-    if (isEdgeBrowser()) {
-      await disposeOcrEngineSafely();
-      pushOcrDiag("edge: engine disposed after scan");
-    }
     ocrBusy = false;
   }
 }
@@ -1327,22 +1297,6 @@ if (els.ocrStallBannerClose) {
 onTypeChange();
 loadAccessInfo();
 preloadOcrAssets();
-if (isEdgeBrowser()) {
-  document.addEventListener("visibilitychange", function () {
-    if (
-      document.visibilityState === "hidden" &&
-      !window.__ocrScanActive &&
-      !ocrBusy
-    ) {
-      disposeOcrEngineSafely();
-    }
-  });
-  window.addEventListener("pagehide", function () {
-    if (!window.__ocrScanActive) {
-      disposeOcrEngineSafely();
-    }
-  });
-}
 if (els.appVersion) {
   els.appVersion.textContent = "v" + APP_VERSION;
 }

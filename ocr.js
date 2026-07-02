@@ -2755,140 +2755,20 @@
     if (!file) throw new Error("请先选择或拍摄照片");
     if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
 
-    if (prefersHelloLotteryApi()) {
-      try {
-        return await recognizeViaHelloLotteryApi(file, lotteryType, onProgress);
-      } catch (cloudErr) {
-        const cloudMsg = (cloudErr && cloudErr.message) || String(cloudErr || "云端失败");
-        if (global.__lotteryOcrDiag) {
-          global.__lotteryOcrDiag.push(
-            new Date().toISOString().slice(11, 19) + " cloud fail: " + cloudMsg
-          );
-        }
-        const report = makeProgressReporter(onProgress);
-        report(6, "云端识别失败，改用本机 OCR...");
-      }
+    if (!prefersHelloLotteryApi()) {
+      throw new Error("云端识别未就绪，请刷新页面后重试");
     }
 
-    const report = makeProgressReporter(onProgress);
-    let prepared = null;
     try {
-    report(2, "准备识别...");
-    prepared = await preprocessImage(file, report, lotteryType);
-
-    report(36, "正在加载 PaddleOCR...");
-    global.__ocrLastProgressAt = Date.now();
-    global.__ocrLastProgressMsg = "正在加载 PaddleOCR...";
-    await loadOcrEngine(report);
-
-    if (prepared.edgeLite) {
-      let stripResult = { lines: [], linesByIndex: [], rawTextsByIndex: [], votes: {} };
-      let stripRawText = "";
-
-      if (lotteryType === "ssq" && prepared.ssqStrips.length) {
-        report(40, "Edge 模式：逐行识别...");
-        global.__ocrLastProgressAt = Date.now();
-        global.__ocrLastProgressMsg = "Edge 逐行识别";
-        stripResult = await runSsqStripOcr(prepared.ssqStrips, function (done, total) {
-          const percent = 40 + Math.round((done / total) * 44);
-          report(percent, "逐行识别 " + done + "/" + total);
-          global.__ocrLastProgressAt = Date.now();
-        });
-        stripRawText = stripResult.rawTextsByIndex.filter(Boolean).join("\n");
+      return await recognizeViaHelloLotteryApi(file, lotteryType, onProgress);
+    } catch (cloudErr) {
+      const cloudMsg = (cloudErr && cloudErr.message) || String(cloudErr || "云端失败");
+      if (global.__lotteryOcrDiag) {
+        global.__lotteryOcrDiag.push(
+          new Date().toISOString().slice(11, 19) + " cloud fail: " + cloudMsg
+        );
       }
-
-      const expectedCount = inferSsqBetCountFromText(stripRawText);
-      let lines = collectSsqLinesFromStripResult(stripResult, expectedCount);
-      if (lotteryType === "ssq" && lines.length < expectedCount && prepared.variants.length) {
-        report(86, "Edge 模式：补充整区识别...");
-        global.__ocrLastProgressAt = Date.now();
-        const zoneResult = await recognizeDataUrl(prepared.variants[0].dataUrl);
-        const zoneParsed = parseSsqFromOcrResult(zoneResult);
-        lines = buildFinalSsqLines(stripResult, zoneParsed, 5);
-        stripRawText = [stripRawText, zoneResult.text || ""].filter(Boolean).join("\n");
-      }
-
-      await resetOcrEngine();
-      await yieldToMain();
-      report(92, "正在整理识别结果...");
-      const previewUrl = prepared.previewUrl;
-      report(100, "识别完成");
-      return {
-        rawText: stripRawText.trim(),
-        lines: lines,
-        detectedType: detectLotteryType(stripRawText),
-        activeType: lotteryType,
-        previewUrl: previewUrl,
-      };
-    }
-
-    let stripResult = { lines: [], linesByIndex: [], rawTextsByIndex: [], votes: {} };
-    let stripRawText = "";
-    if (lotteryType === "ssq" && prepared.ssqStrips && prepared.ssqStrips.length) {
-      report(40, "正在按票面排版识别号码...");
-      stripResult = await runSsqStripOcr(prepared.ssqStrips, function (done, total) {
-        const percent = 40 + Math.round((done / total) * 48);
-        report(percent, "正在识别号码行 " + done + "/" + total);
-      });
-      stripRawText = stripResult.rawTextsByIndex.filter(Boolean).join("\n");
-    }
-
-    const expectedCount = inferSsqBetCountFromText(stripRawText);
-    const stripLines = collectSsqLinesFromStripResult(stripResult, expectedCount);
-    if (stripLines.length) {
-      stripResult.lines = stripLines;
-    }
-
-    const ssqFastDone =
-      lotteryType === "ssq" &&
-      shouldSkipSupplementalZoneOcr(stripResult.linesByIndex);
-
-    let ocrTexts = [];
-    if (!ssqFastDone) {
-      const ocrStart = lotteryType === "ssq" && prepared.ssqStrips.length ? 88 : 40;
-      report(ocrStart, lotteryType === "ssq" ? "正在补充识别..." : "正在识别号码...");
-      ocrTexts = await runMultiPassOcr(prepared.variants, function (done, total) {
-        const percent = ocrStart + (done / total) * (92 - ocrStart);
-        report(percent, "增强识别中 " + done + "/" + total);
-      });
-    } else {
-      report(92, "逐行识别完成...");
-    }
-
-    report(94, "正在整理识别结果...");
-
-    const rawText = [stripRawText]
-      .concat(
-        ocrTexts.map(function (text) {
-          return String(text || "").trim();
-        })
-      )
-      .filter(Boolean)
-      .join("\n---\n");
-
-    const detectedType = detectLotteryType(rawText);
-    const activeType = detectedType || lotteryType;
-    const ocrResult = collectParsedLineVotes(ocrTexts, activeType);
-    let lines =
-      lotteryType === "ssq"
-        ? buildFinalSsqLines(
-            stripResult,
-            ocrResult,
-            Math.max(prepared.ssqStrips.length || 0, 5)
-          )
-        : ocrResult.lines;
-    const previewUrl = prepared.previewUrl;
-    report(100, "识别完成");
-
-    return {
-      rawText: rawText.trim(),
-      lines: lines,
-      detectedType: detectedType,
-      activeType: activeType,
-      previewUrl: previewUrl,
-    };
-    } finally {
-      releasePreparedImages(prepared);
+      throw new Error("云端识别失败：" + cloudMsg);
     }
   }
 
