@@ -944,7 +944,7 @@ textarea {
 .ocr-error-modal {
   position: fixed;
   inset: 0;
-  z-index: 1200;
+  z-index: 5000;
   display: flex;
   align-items: flex-end;
   justify-content: center;

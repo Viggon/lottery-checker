@@ -688,9 +688,9 @@
 
   const MAX_IMAGE_EDGE = 1200;
   const IMAGE_LOAD_TIMEOUT_MS = 15000;
+  const PREPROCESS_STEP_TIMEOUT_MS = 20000;
 
-  function shouldUsePerspectiveCorrection() {
-    if (global.cv && global.cv.imread) return true;
+  function isMobileLike() {
     const touch =
       typeof navigator !== "undefined" &&
       (navigator.maxTouchPoints > 0 ||
@@ -699,7 +699,11 @@
       typeof window !== "undefined" &&
       window.matchMedia &&
       window.matchMedia("(max-width: 768px)").matches;
-    return !(touch || narrow);
+    return !!(touch || narrow);
+  }
+
+  function shouldUsePerspectiveCorrection() {
+    return !isMobileLike();
   }
 
   function loadOpenCV() {
@@ -1014,15 +1018,30 @@
       source.width > MAX_IMAGE_EDGE || source.height > MAX_IMAGE_EDGE
         ? createScaledCanvasFromSource(source)
         : source;
+
+    if (isMobileLike()) {
+      report(32, "手机模式：跳过角度校正，继续识别...");
+      return base;
+    }
+
     report(10, "正在校正拍摄角度...");
     await yieldToMain();
-    base = deskewCanvas(base);
+    try {
+      base = deskewCanvas(base);
+    } catch (_) {
+      /* deskew failed, use original */
+    }
 
     if (shouldUsePerspectiveCorrection()) {
       try {
         report(16, "正在尝试透视校正...");
-        const cv = await loadOpenCV();
+        const cv = await withTimeout(
+          loadOpenCV(),
+          PREPROCESS_STEP_TIMEOUT_MS,
+          "OpenCV 加载超时"
+        );
         report(24, "正在拉平票面...");
+        await yieldToMain();
         const warped = tryPerspectiveCorrect(base, cv);
         if (warped) base = warped;
         report(32, "透视校正完成");
@@ -1297,6 +1316,7 @@
   function extractSsqRowStripsFromCanvas(base) {
     const layoutStrips = extractSsqLayoutRowStrips(base);
     if (layoutStrips.length) return layoutStrips;
+    if (isMobileLike()) return [];
 
     const top = Math.round(base.height * 0.2);
     const height = Math.round(base.height * 0.72);

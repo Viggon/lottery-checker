@@ -1,4 +1,4 @@
-const APP_VERSION = "1.5.5";
+const APP_VERSION = "1.5.6";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const FETCH_TIMEOUT_MS = 15000;
@@ -348,8 +348,10 @@ const els = {
 
 let ocrLastStatus = "";
 let ocrErrorShown = false;
-const OCR_WATCHDOG_MS_MOBILE = 90000;
-const OCR_WATCHDOG_MS_DESKTOP = 120000;
+const OCR_WATCHDOG_MS_MOBILE = 60000;
+const OCR_WATCHDOG_MS_DESKTOP = 90000;
+const OCR_STALL_MS_MOBILE = 20000;
+const OCR_STALL_MS_DESKTOP = 25000;
 
 function normalize2(value) {
   const n = String(value).trim();
@@ -468,6 +470,8 @@ function setOcrStatus(text, isError = false, percent) {
 
 function onOcrProgress(message, percent) {
   ocrLastStatus = message;
+  window.__ocrLastProgressAt = Date.now();
+  window.__ocrLastProgressMsg = message;
   pushOcrDiag((percent != null ? percent + "% " : "") + message);
   setOcrStatus(message, false, percent);
 }
@@ -491,6 +495,7 @@ function startOcrWatchdog() {
     window.LotteryOcrWatchdog.start(ms, {
       version: APP_VERSION,
       lastStatus: ocrLastStatus,
+      stallMs: isMobileDevice() ? OCR_STALL_MS_MOBILE : OCR_STALL_MS_DESKTOP,
     });
   }
 }
@@ -532,6 +537,8 @@ function showOcrErrorDialog(err) {
     els.ocrErrorModal.classList.remove("hidden");
     els.ocrErrorModal.setAttribute("aria-hidden", "false");
     document.body.style.overflow = "hidden";
+    const boot = document.getElementById("bootOverlay");
+    if (boot) boot.classList.add("hidden");
     return;
   }
   window.alert(msg + "\n\n" + logText.slice(-1800));
@@ -757,6 +764,9 @@ async function handleOcrFile(file) {
   window.__lotteryOcrDiag = [];
   ocrErrorShown = false;
   window.__ocrErrorShown = false;
+  window.__ocrScanActive = true;
+  window.__ocrLastProgressAt = Date.now();
+  window.__ocrLastProgressMsg = "准备识别";
   pushOcrDiag("scan start " + file.name + " " + file.size + "b");
   setOcrStatus("准备识别...", false, 0);
   els.ocrRawWrap.classList.add("hidden");
@@ -809,6 +819,7 @@ async function handleOcrFile(file) {
     }
     showOcrErrorDialog(err);
   } finally {
+    window.__ocrScanActive = false;
     if (els.cameraInput) els.cameraInput.value = "";
     if (els.galleryInput) els.galleryInput.value = "";
   }
