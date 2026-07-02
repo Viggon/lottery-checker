@@ -747,9 +747,10 @@ textarea {
   gap: 10px;
   min-width: 0;
   padding: 12px 14px;
-  border: 2px solid rgba(184, 169, 255, 0.28);
+  border: none;
   border-radius: 14px;
-  background: linear-gradient(135deg, var(--pink), var(--lavender));
+  background-color: var(--pink);
+  background-image: linear-gradient(90deg, var(--pink) 0%, var(--lavender) 100%);
   color: #fff;
   font: inherit;
   font-size: 0.88rem;
@@ -759,7 +760,12 @@ textarea {
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  box-shadow: 0 6px 14px rgba(255, 143, 171, 0.28);
+  overflow: hidden;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  box-shadow:
+    0 6px 14px rgba(255, 143, 171, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -837,7 +843,8 @@ textarea {
 
 .issue-picker-option.active {
   color: #fff;
-  background: linear-gradient(135deg, var(--pink), var(--lavender));
+  background-color: var(--pink);
+  background-image: linear-gradient(90deg, var(--pink) 0%, var(--lavender) 100%);
 }
 
 .hero-version {
