@@ -1064,6 +1064,60 @@
     await yieldToMain();
     report(35, "正在分析号码区域...");
     await yieldToMain();
+    return buildPreprocessVariantsFromCanvasAsync(base, lotteryType, report);
+  }
+
+  function pulseProgress(report, percent, message) {
+    report(percent, message);
+    global.__ocrLastProgressAt = Date.now();
+    global.__ocrLastProgressMsg = message;
+  }
+
+  function cropSsqNumberZoneFast(base) {
+    const w = base.width;
+    const h = base.height;
+    return cropCanvasRegion(
+      base,
+      Math.round(w * SSQ_LAYOUT.fallbackLeft),
+      Math.round(h * SSQ_LAYOUT.fallbackTop),
+      Math.round(w * (SSQ_LAYOUT.fallbackRight - SSQ_LAYOUT.fallbackLeft)),
+      Math.round(h * (SSQ_LAYOUT.fallbackBottom - SSQ_LAYOUT.fallbackTop))
+    );
+  }
+
+  async function buildPreprocessVariantsFromCanvasAsync(base, lotteryType, report) {
+    if (isMobileLike()) {
+      pulseProgress(report, 36, "手机快速模式：准备识别图...");
+      await yieldToMain();
+      const previewUrl = canvasToDataUrl(base);
+      pulseProgress(report, 38, "手机快速模式：裁剪号码区...");
+      await yieldToMain();
+
+      if (lotteryType === "ssq") {
+        const zone = cropSsqNumberZoneFast(base);
+        await yieldToMain();
+        pulseProgress(report, 40, "手机快速模式：增强对比度...");
+        const enhanced = renderVariant(zone, 0, 0, zone.width, zone.height, "contrast");
+        await yieldToMain();
+        const dataUrl = canvasToDataUrl(enhanced);
+        pulseProgress(report, 42, "图片准备完成，正在加载 OCR...");
+        return {
+          previewUrl: previewUrl,
+          variants: [{ id: "mobile-ssq-zone", dataUrl: dataUrl }],
+          ssqStrips: [],
+        };
+      }
+
+      pulseProgress(report, 42, "图片准备完成，正在加载 OCR...");
+      return {
+        previewUrl: previewUrl,
+        variants: [{ id: "mobile-full", dataUrl: previewUrl }],
+        ssqStrips: [],
+      };
+    }
+
+    pulseProgress(report, 36, "正在分析票面布局...");
+    await yieldToMain();
     return buildPreprocessVariantsFromCanvas(base, lotteryType);
   }
 
@@ -1917,6 +1971,8 @@
     const prepared = await preprocessImage(file, report, lotteryType);
 
     report(36, "正在加载 PaddleOCR...");
+    global.__ocrLastProgressAt = Date.now();
+    global.__ocrLastProgressMsg = "正在加载 PaddleOCR...";
     await loadOcrEngine(report);
 
     let stripResult = { lines: [], votes: {} };

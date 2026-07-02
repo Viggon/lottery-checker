@@ -3,6 +3,7 @@
 
   var watchdogIframe = null;
   var bootIframe = null;
+  var permanentIframe = null;
 
   function getIframe(id) {
     var el = document.getElementById(id);
@@ -25,10 +26,22 @@
       .replace(/\n/g, "\\n");
   }
 
-  function showErrorOnParent(title, message, logText) {
+  function showStallBanner(message) {
     try {
       var boot = document.getElementById("bootOverlay");
       if (boot) boot.classList.add("hidden");
+      var banner = document.getElementById("ocrStallBanner");
+      var bannerText = document.getElementById("ocrStallBannerText");
+      if (banner && bannerText) {
+        bannerText.textContent = message;
+        banner.classList.remove("hidden");
+      }
+    } catch (e) {}
+  }
+
+  function showErrorOnParent(title, message, logText) {
+    try {
+      showStallBanner(message);
       var modal = document.getElementById("ocrErrorModal");
       var msgEl = document.getElementById("ocrErrorMessage");
       var logEl = document.getElementById("ocrErrorLog");
@@ -51,6 +64,35 @@
     return false;
   }
 
+  function fireScanError(errMsg, version) {
+    try {
+      global.__ocrErrorShown = true;
+      global.__ocrScanActive = false;
+      var snap = {
+        version: version || "?",
+        lastStatus: global.__ocrLastProgressMsg || "",
+        cvReady: !!(global.cv && global.cv.Mat),
+        paddleEngine: !!global.LotteryOcrEngine,
+        ua: navigator.userAgent,
+      };
+      var lines = (global.__lotteryOcrDiag || []).concat([
+        "---",
+        JSON.stringify(snap, null, 2),
+      ]);
+      showStallBanner(errMsg);
+      showErrorOnParent("识别失败", errMsg, lines.join("\n"));
+      var st = document.getElementById("ocrStatus");
+      if (st) {
+        st.textContent = errMsg;
+        st.className = "status ocr-status-line error";
+      }
+    } catch (e) {
+      try {
+        global.alert(errMsg);
+      } catch (e2) {}
+    }
+  }
+
   function stopWatchdog() {
     if (!watchdogIframe) return;
     try {
@@ -67,7 +109,7 @@
     stopWatchdog();
     options = options || {};
     var secs = Math.round(ms / 1000);
-    var stallMs = options.stallMs || 25000;
+    var stallMs = options.stallMs || 12000;
     var version = esc(options.version || "?");
 
     watchdogIframe = getIframe("ocrWatchdogIframe");
@@ -82,43 +124,16 @@
         "  var stallMs = " +
         stallMs +
         ";\n" +
+        "  var version = '" +
+        version +
+        "';\n" +
         "  function fireError(errMsg) {\n" +
         "    try {\n" +
-        "      parent.__ocrErrorShown = true;\n" +
-        "      parent.__ocrScanActive = false;\n" +
-        "      var d = parent.document;\n" +
-        "      var snap = {\n" +
-        "        version: '" +
-        version +
-        "',\n" +
-        "        lastStatus: parent.__ocrLastProgressMsg || '',\n" +
-        "        cvReady: !!(parent.cv && parent.cv.Mat),\n" +
-        "        opencvScript: !!d.querySelector('script[data-lottery-opencv=\"1\"]'),\n" +
-        "        paddleEngine: !!parent.LotteryOcrEngine,\n" +
-        "        ua: parent.navigator.userAgent\n" +
-        "      };\n" +
-        "      var lines = (parent.__lotteryOcrDiag || []).concat(['---', JSON.stringify(snap, null, 2)]);\n" +
-        "      var modal = d.getElementById('ocrErrorModal');\n" +
-        "      var msg = d.getElementById('ocrErrorMessage');\n" +
-        "      var log = d.getElementById('ocrErrorLog');\n" +
-        "      var boot = d.getElementById('bootOverlay');\n" +
-        "      if (boot) boot.classList.add('hidden');\n" +
-        "      if (modal && msg && log) {\n" +
-        "        msg.textContent = errMsg;\n" +
-        "        log.textContent = lines.join('\\n');\n" +
-        "        modal.classList.remove('hidden');\n" +
-        "        modal.setAttribute('aria-hidden','false');\n" +
-        "        d.body.style.overflow = 'hidden';\n" +
+        "      if (parent.LotteryOcrWatchdog && parent.LotteryOcrWatchdog.fireScanError) {\n" +
+        "        parent.LotteryOcrWatchdog.fireScanError(errMsg, version);\n" +
+        "        return;\n" +
         "      }\n" +
-        "      parent.alert(errMsg + '\\n\\n' + lines.slice(-8).join('\\n'));\n" +
-        "      var st = d.getElementById('ocrStatus');\n" +
-        "      if (st) {\n" +
-        "        st.textContent = errMsg;\n" +
-        "        st.className = 'status ocr-status-line error';\n" +
-        "      }\n" +
-        "    } catch(e) {\n" +
-        "      try { parent.alert(errMsg); } catch(e2) {}\n" +
-        "    }\n" +
+        "    } catch(e) {}\n" +
         "  }\n" +
         "  var timer = setInterval(function(){\n" +
         "    try {\n" +
@@ -138,6 +153,35 @@
         " 秒，请换 WiFi 后刷新重试）');\n" +
         "    } catch(e) {}\n" +
         "  }, 400);\n" +
+        "})();\n" +
+        "<\/script></body></html>"
+    );
+    doc.close();
+  }
+
+  function startPermanentMonitor(stallMs) {
+    if (permanentIframe) return;
+    permanentIframe = getIframe("ocrPermanentMonitorIframe");
+    var doc = permanentIframe.contentDocument;
+    doc.open();
+    doc.write(
+      "<!DOCTYPE html><html><body><script>\n" +
+        "(function(){\n" +
+        "  var stallMs = " +
+        stallMs +
+        ";\n" +
+        "  setInterval(function(){\n" +
+        "    try {\n" +
+        "      if (!parent.__ocrScanActive || parent.__ocrErrorShown) return;\n" +
+        "      var stalled = Date.now() - (parent.__ocrLastProgressAt || 0);\n" +
+        "      if (stalled < stallMs) return;\n" +
+        "      var stuckMsg = parent.__ocrLastProgressMsg || '未知步骤';\n" +
+        "      var errMsg = '识别卡住（停在：' + stuckMsg + '，已 ' + Math.round(stalled / 1000) + ' 秒无进展）';\n" +
+        "      if (parent.LotteryOcrWatchdog && parent.LotteryOcrWatchdog.fireScanError) {\n" +
+        "        parent.LotteryOcrWatchdog.fireScanError(errMsg, parent.__appVersion || '?');\n" +
+        "      }\n" +
+        "    } catch(e) {}\n" +
+        "  }, 1000);\n" +
         "})();\n" +
         "<\/script></body></html>"
     );
@@ -179,27 +223,9 @@
         "      if (status) status.textContent = 'OpenCV 编译中，已等待 ' + sec + ' 秒...';\n" +
         "      if (Date.now() >= deadline) {\n" +
         "        clearInterval(timer);\n" +
-        "        parent.__ocrErrorShown = true;\n" +
-        "        var errMsg = 'OpenCV 初始化超时（已等待 " +
+        "        parent.LotteryOcrWatchdog.fireScanError('OpenCV 初始化超时（已等待 " +
         timeoutSec +
-        " 秒，请换 WiFi 后刷新）';\n" +
-        "        var diag = (parent.__lotteryOcrDiag || []).concat([\n" +
-        "          'boot timeout',\n" +
-        "          'cvReady=' + !!(parent.cv && parent.cv.Mat),\n" +
-        "          'ua=' + parent.navigator.userAgent\n" +
-        "        ]);\n" +
-        "        var modal = d.getElementById('ocrErrorModal');\n" +
-        "        var msg = d.getElementById('ocrErrorMessage');\n" +
-        "        var log = d.getElementById('ocrErrorLog');\n" +
-        "        boot.classList.add('hidden');\n" +
-        "        if (modal && msg && log) {\n" +
-        "          msg.textContent = errMsg;\n" +
-        "          log.textContent = diag.join('\\n');\n" +
-        "          modal.classList.remove('hidden');\n" +
-        "          modal.setAttribute('aria-hidden','false');\n" +
-        "          d.body.style.overflow = 'hidden';\n" +
-        "        }\n" +
-        "        parent.alert(errMsg + '\\n\\n' + diag.join('\\n'));\n" +
+        " 秒，请换 WiFi 后刷新）', parent.__appVersion || '?');\n" +
         "      }\n" +
         "    } catch(e) {}\n" +
         "  }, 500);\n" +
@@ -223,7 +249,9 @@
     start: startWatchdog,
     stop: stopWatchdog,
     startBootMonitor: startBootMonitor,
+    startPermanentMonitor: startPermanentMonitor,
     hideBootOverlay: hideBootOverlay,
     showError: showErrorOnParent,
+    fireScanError: fireScanError,
   };
 })(window);

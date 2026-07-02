@@ -142,6 +142,11 @@
       </div>
     </div>
 
+    <div id="ocrStallBanner" class="ocr-stall-banner hidden" role="alert">
+      <span id="ocrStallBannerText"></span>
+      <button type="button" id="ocrStallBannerClose" class="ocr-stall-banner-close">查看详情</button>
+    </div>
+
     <div id="ocrErrorModal" class="ocr-error-modal hidden" aria-hidden="true" role="alertdialog" aria-labelledby="ocrErrorTitle">
       <div id="ocrErrorBackdrop" class="ocr-error-backdrop"></div>
       <div class="ocr-error-sheet">
@@ -164,6 +169,7 @@
           navigator.userAgent || ""
         );
         LotteryOcrWatchdog.startBootMonitor(isMobile ? 120000 : 180000);
+        LotteryOcrWatchdog.startPermanentMonitor(isMobile ? 12000 : 18000);
       }
     </script>
     <script src="./vendor/opencv/opencv.js" data-lottery-opencv="1"></script>

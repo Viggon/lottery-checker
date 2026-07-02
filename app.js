@@ -1,4 +1,5 @@
-const APP_VERSION = "1.5.6";
+const APP_VERSION = "1.5.7";
+window.__appVersion = APP_VERSION;
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const FETCH_TIMEOUT_MS = 15000;
@@ -344,14 +345,16 @@ const els = {
   ocrErrorLog: document.getElementById("ocrErrorLog"),
   ocrErrorClose: document.getElementById("ocrErrorClose"),
   ocrErrorBackdrop: document.getElementById("ocrErrorBackdrop"),
+  ocrStallBanner: document.getElementById("ocrStallBanner"),
+  ocrStallBannerClose: document.getElementById("ocrStallBannerClose"),
 };
 
 let ocrLastStatus = "";
 let ocrErrorShown = false;
 const OCR_WATCHDOG_MS_MOBILE = 60000;
 const OCR_WATCHDOG_MS_DESKTOP = 90000;
-const OCR_STALL_MS_MOBILE = 20000;
-const OCR_STALL_MS_DESKTOP = 25000;
+const OCR_STALL_MS_MOBILE = 12000;
+const OCR_STALL_MS_DESKTOP = 18000;
 
 function normalize2(value) {
   const n = String(value).trim();
@@ -510,7 +513,20 @@ function closeOcrErrorDialog() {
   if (!els.ocrErrorModal) return;
   els.ocrErrorModal.classList.add("hidden");
   els.ocrErrorModal.setAttribute("aria-hidden", "true");
+  if (els.ocrStallBanner) els.ocrStallBanner.classList.add("hidden");
   document.body.style.overflow = "";
+}
+
+function openOcrErrorFromBanner() {
+  if (!window.__ocrErrorShown && ocrLastStatus) {
+    showOcrErrorDialog(new Error("识别卡住（停在：" + ocrLastStatus + "）"));
+    return;
+  }
+  if (els.ocrErrorModal) {
+    els.ocrErrorModal.classList.remove("hidden");
+    els.ocrErrorModal.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+  }
 }
 
 function showOcrErrorDialog(err) {
@@ -1171,6 +1187,9 @@ els.menuClose.addEventListener("click", closeMenu);
 els.menuBackdrop.addEventListener("click", closeMenu);
 if (els.ocrErrorClose) els.ocrErrorClose.addEventListener("click", closeOcrErrorDialog);
 if (els.ocrErrorBackdrop) els.ocrErrorBackdrop.addEventListener("click", closeOcrErrorDialog);
+if (els.ocrStallBannerClose) {
+  els.ocrStallBannerClose.addEventListener("click", openOcrErrorFromBanner);
+}
 
 onTypeChange();
 loadAccessInfo();
