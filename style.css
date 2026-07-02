@@ -728,14 +728,51 @@ textarea {
   margin-bottom: 12px;
 }
 
-.issue-picker label {
+.issue-picker-head {
   margin-bottom: 8px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
 }
 
-.issue-picker select {
+.issue-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.issue-tab {
   min-width: 0;
-  padding: 10px 12px;
-  font-size: 0.88rem;
+  padding: 10px 8px;
+  border: 2px solid rgba(184, 169, 255, 0.28);
+  border-radius: 14px;
+  background: #faf8ff;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.issue-tab:active {
+  transform: scale(0.98);
+}
+
+.issue-tab.active {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--pink), var(--lavender));
+  box-shadow: 0 6px 14px rgba(255, 143, 171, 0.28);
+}
+
+.issue-tab:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .hero-version {

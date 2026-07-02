@@ -1,4 +1,4 @@
-const APP_VERSION = "1.8.2";
+const APP_VERSION = "1.8.3";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -315,10 +315,11 @@ const state = {
 };
 
 let nextDrawTimer = null;
+let selectedIssue = "";
 
 const els = {
   lotteryType: document.getElementById("lotteryType"),
-  issueSelect: document.getElementById("issueSelect"),
+  issueTabs: document.getElementById("issueTabs"),
   refreshBtn: document.getElementById("refreshBtn"),
   compareBtn: document.getElementById("compareBtn"),
   fetchStatus: document.getElementById("fetchStatus"),
@@ -857,53 +858,57 @@ async function fetchLotteryPayload(type, limit) {
 }
 
 function getWantedIssue() {
-  return els.issueSelect ? els.issueSelect.value.trim() : "";
+  return String(selectedIssue || "").trim();
 }
 
 function setIssueSelection(issue) {
-  if (!els.issueSelect) return;
-  const wanted = String(issue || "").trim();
-  if (!wanted) {
-    els.issueSelect.value = "";
-    return;
-  }
-  const hasOption = Array.from(els.issueSelect.options).some(function (opt) {
-    return opt.value === wanted;
-  });
-  if (!hasOption) {
-    const opt = document.createElement("option");
-    opt.value = wanted;
-    opt.textContent = "第 " + wanted + " 期";
-    els.issueSelect.appendChild(opt);
-  }
-  els.issueSelect.value = wanted;
+  selectedIssue = String(issue || "").trim();
+  renderIssueTabs(state.draws);
 }
 
-function renderIssueOptions(draws) {
-  if (!els.issueSelect) return;
-  const wanted = getWantedIssue();
-  const options = ['<option value="">最新一期</option>'];
-  const previous = draws.slice(1, 1 + ISSUE_PREVIOUS_COUNT);
-
-  previous.forEach(function (draw) {
-    const issue = String(draw.issue);
-    const label = "第 " + issue + " 期" + (draw.date ? " · " + draw.date : "");
-    options.push(
-      '<option value="' + escapeHtml(issue) + '">' + escapeHtml(label) + "</option>"
-    );
+function buildIssueTabItems(draws) {
+  const items = [{ issue: "", label: "最新一期" }];
+  const list = draws || [];
+  list.slice(1, 1 + ISSUE_PREVIOUS_COUNT).forEach(function (draw) {
+    items.push({
+      issue: String(draw.issue),
+      label: "第 " + draw.issue + " 期",
+    });
   });
-
-  els.issueSelect.innerHTML = options.join("");
   if (
-    wanted &&
-    Array.from(els.issueSelect.options).some(function (opt) {
-      return opt.value === wanted;
+    selectedIssue &&
+    !items.some(function (item) {
+      return item.issue === selectedIssue;
     })
   ) {
-    els.issueSelect.value = wanted;
-  } else {
-    els.issueSelect.value = "";
+    items.push({
+      issue: selectedIssue,
+      label: "第 " + selectedIssue + " 期",
+    });
   }
+  return items;
+}
+
+function renderIssueTabs(draws) {
+  if (!els.issueTabs) return;
+  const items = buildIssueTabItems(draws);
+  const activeIssue = getWantedIssue();
+  els.issueTabs.innerHTML = items
+    .map(function (item) {
+      const isActive = activeIssue ? activeIssue === item.issue : item.issue === "";
+      return (
+        '<button type="button" class="issue-tab' +
+        (isActive ? " active" : "") +
+        '" data-issue="' +
+        escapeHtml(item.issue) +
+        '" role="tab" aria-selected="' +
+        (isActive ? "true" : "false") +
+        '">' +
+        escapeHtml(item.label) +
+        "</button>"
+      );
+    })
+    .join("");
 }
 
 function mergeDrawIntoList(draw) {
@@ -984,7 +989,7 @@ async function applyIssueSelection() {
     draw = await findDrawByIssueOnline(state.type || els.lotteryType.value, wantedIssue);
     if (draw) {
       mergeDrawIntoList(draw);
-      renderIssueOptions(state.draws);
+      renderIssueTabs(state.draws);
       setIssueInputs(wantedIssue);
     }
   }
@@ -1121,9 +1126,10 @@ function parseDrawList(payload, type) {
   if (payload.source === "cwl" || payload.source === "中国福利彩票官网") {
     return (payload.data.result || []).map(cfg.normalizeDraw);
   }
-  const list = payload.data?.data?.list || [];
+  const root = payload.data || {};
+  const list = root.data?.list || root.list || [];
   if (list.length) return list.map(cfg.normalizeDraw);
-  const last = payload.data?.last || payload.data?.data?.last;
+  const last = root.last || root.data?.last;
   return last ? [cfg.normalizeDraw(last)] : [];
 }
 
@@ -1135,20 +1141,36 @@ async function fetchDrawHistory(type, minCount) {
   const isLocal =
     location.hostname === "127.0.0.1" || location.hostname === "localhost";
 
-  for (let page = 1; page <= 5 && merged.length < minCount; page += 1) {
-    const payload = isLocal
-      ? await fetchLotteryPayload(type, Math.max(10, minCount))
-      : await fetchHuiniaoOnline(type, 10, page);
-    if (!firstPayload) firstPayload = payload;
-    const draws = parseDrawList(payload, type);
-    draws.forEach(function (draw) {
+  if (isLocal) {
+    const payload = await fetchLotteryPayload(type, Math.max(10, minCount));
+    firstPayload = payload;
+    parseDrawList(payload, type).forEach(function (draw) {
       const issue = String(draw.issue);
       if (seen.has(issue)) return;
       seen.add(issue);
       merged.push(draw);
     });
-    if (isLocal) break;
-    if (draws.length < 10) break;
+  } else {
+    const payload = await fetchHuiniaoOnline(type, 5, 1);
+    firstPayload = payload;
+    parseDrawList(payload, type).forEach(function (draw) {
+      const issue = String(draw.issue);
+      if (seen.has(issue)) return;
+      seen.add(issue);
+      merged.push(draw);
+    });
+
+    for (let page = 2; page <= 3 && merged.length < minCount; page += 1) {
+      const morePayload = await fetchHuiniaoOnline(type, 10, page);
+      const draws = parseDrawList(morePayload, type);
+      draws.forEach(function (draw) {
+        const issue = String(draw.issue);
+        if (seen.has(issue)) return;
+        seen.add(issue);
+        merged.push(draw);
+      });
+      if (draws.length < 10) break;
+    }
   }
 
   merged.sort(function (a, b) {
@@ -1324,7 +1346,7 @@ async function fetchDraws() {
     }
     if (!state.draws.length) throw new Error("没有拿到开奖数据");
 
-    renderIssueOptions(state.draws);
+    renderIssueTabs(state.draws);
 
     let draw = wantedIssue
       ? state.draws.find(function (item) {
@@ -1336,7 +1358,7 @@ async function fetchDraws() {
       draw = await findDrawByIssueOnline(type, wantedIssue);
       if (draw) {
         mergeDrawIntoList(draw);
-        renderIssueOptions(state.draws);
+        renderIssueTabs(state.draws);
         setIssueSelection(wantedIssue);
       }
     }
@@ -1467,8 +1489,9 @@ function onTypeChange() {
   state.currentDraw = null;
   state.nextDraw = null;
   state.draws = [];
-  if (els.issueSelect) {
-    els.issueSelect.innerHTML = '<option value="">最新一期</option>';
+  selectedIssue = "";
+  if (els.issueTabs) {
+    renderIssueTabs([]);
   }
   if (nextDrawTimer) {
     clearInterval(nextDrawTimer);
@@ -1502,8 +1525,12 @@ els.lotteryType.addEventListener("change", function () {
 });
 els.refreshBtn.addEventListener("click", fetchDraws);
 els.compareBtn.addEventListener("click", () => compareNumbers());
-if (els.issueSelect) {
-  els.issueSelect.addEventListener("change", function () {
+if (els.issueTabs) {
+  els.issueTabs.addEventListener("click", function (event) {
+    const btn = event.target.closest(".issue-tab");
+    if (!btn) return;
+    selectedIssue = btn.dataset.issue || "";
+    renderIssueTabs(state.draws);
     applyIssueSelection();
   });
 }
