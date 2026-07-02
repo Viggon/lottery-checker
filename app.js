@@ -70,7 +70,7 @@ const LOTTERY = {
         level = 6;
         name = "六等奖";
       } else if (redHit === 3 && !blueHit) {
-        const fuyunStatus = getSsqFuyunStatus(draw);
+        fuyunStatus = getSsqFuyunStatus(draw);
         if (fuyunStatus === "active") {
           level = SSQ_FUYUN_LEVEL;
           name = "福运奖";
@@ -78,14 +78,12 @@ const LOTTERY = {
           name = "福运奖待确认";
         }
       }
-      const fuyunStatusForTicket =
-        redHit === 3 && !blueHit ? getSsqFuyunStatus(draw) : "none";
       return {
         level,
         name,
         detail: `红球中 ${redHit} 个，蓝球${blueHit ? "中" : "未中"}`,
         hits: { red: matched.drawHits, blue: blueHit ? [ticket.blue] : [] },
-        fuyunUnknown: fuyunStatusForTicket === "unknown",
+        fuyunUnknown: fuyunStatus === "unknown",
       };
     },
     renderDraw(draw) {
