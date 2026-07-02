@@ -1,4 +1,4 @@
-const APP_VERSION = "1.8.1";
+const APP_VERSION = "1.8.2";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -9,7 +9,7 @@ const OCR_CLOUD_STALL_MS = 120000;
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const FETCH_TIMEOUT_MS = 15000;
 const FETCH_RETRY_COUNT = 3;
-const FETCH_RETRY_DELAY_MS = 1200;
+const ISSUE_PREVIOUS_COUNT = 3;
 
 const LOTTERY = {
   ssq: {
@@ -883,17 +883,23 @@ function renderIssueOptions(draws) {
   if (!els.issueSelect) return;
   const wanted = getWantedIssue();
   const options = ['<option value="">最新一期</option>'];
-  draws.forEach(function (draw, index) {
+  const previous = draws.slice(1, 1 + ISSUE_PREVIOUS_COUNT);
+
+  previous.forEach(function (draw) {
     const issue = String(draw.issue);
-    const latestTag = index === 0 ? "（最新）" : "";
-    const label =
-      "第 " + issue + " 期" + latestTag + (draw.date ? " · " + draw.date : "");
+    const label = "第 " + issue + " 期" + (draw.date ? " · " + draw.date : "");
     options.push(
       '<option value="' + escapeHtml(issue) + '">' + escapeHtml(label) + "</option>"
     );
   });
+
   els.issueSelect.innerHTML = options.join("");
-  if (wanted && draws.some(function (draw) { return String(draw.issue) === wanted; })) {
+  if (
+    wanted &&
+    Array.from(els.issueSelect.options).some(function (opt) {
+      return opt.value === wanted;
+    })
+  ) {
     els.issueSelect.value = wanted;
   } else {
     els.issueSelect.value = "";
@@ -1117,8 +1123,42 @@ function parseDrawList(payload, type) {
   }
   const list = payload.data?.data?.list || [];
   if (list.length) return list.map(cfg.normalizeDraw);
-  const last = payload.data?.data?.last;
+  const last = payload.data?.last || payload.data?.data?.last;
   return last ? [cfg.normalizeDraw(last)] : [];
+}
+
+async function fetchDrawHistory(type, minCount) {
+  minCount = minCount || ISSUE_PREVIOUS_COUNT + 1;
+  const merged = [];
+  const seen = new Set();
+  let firstPayload = null;
+  const isLocal =
+    location.hostname === "127.0.0.1" || location.hostname === "localhost";
+
+  for (let page = 1; page <= 5 && merged.length < minCount; page += 1) {
+    const payload = isLocal
+      ? await fetchLotteryPayload(type, Math.max(10, minCount))
+      : await fetchHuiniaoOnline(type, 10, page);
+    if (!firstPayload) firstPayload = payload;
+    const draws = parseDrawList(payload, type);
+    draws.forEach(function (draw) {
+      const issue = String(draw.issue);
+      if (seen.has(issue)) return;
+      seen.add(issue);
+      merged.push(draw);
+    });
+    if (isLocal) break;
+    if (draws.length < 10) break;
+  }
+
+  merged.sort(function (a, b) {
+    return parseInt(b.issue, 10) - parseInt(a.issue, 10);
+  });
+
+  return {
+    draws: merged,
+    payload: firstPayload,
+  };
 }
 
 function parseNextDraw(payload, type) {
@@ -1270,12 +1310,18 @@ async function fetchDraws() {
   els.refreshBtn.disabled = true;
 
   try {
-    const payload = await fetchLotteryPayload(type, 30);
+    const history = await fetchDrawHistory(type, ISSUE_PREVIOUS_COUNT + 1);
+    const payload = history.payload;
 
-    state.draws = parseDrawList(payload, type);
+    state.draws = history.draws;
     state.draws = await enrichDrawsWithCwlPrizes(type, state.draws);
-    state.nextDraw = parseNextDraw(payload, type);
-    state.source = payload.source;
+    state.nextDraw = payload ? parseNextDraw(payload, type) : computeNextDrawFromSchedule(type);
+    state.source = payload ? payload.source : "在线开奖接口";
+    if (state.draws.length < ISSUE_PREVIOUS_COUNT + 1) {
+      pushOcrDiag(
+        "issue history short: " + state.draws.length + "/" + (ISSUE_PREVIOUS_COUNT + 1)
+      );
+    }
     if (!state.draws.length) throw new Error("没有拿到开奖数据");
 
     renderIssueOptions(state.draws);
