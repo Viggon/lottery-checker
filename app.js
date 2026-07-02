@@ -1,5 +1,8 @@
-const APP_VERSION = "1.5.8";
+const APP_VERSION = "1.5.9";
 window.__appVersion = APP_VERSION;
+
+const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
+const OCR_TOTAL_TIMEOUT_MS_DESKTOP = 120000;
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const FETCH_TIMEOUT_MS = 15000;
@@ -351,6 +354,7 @@ const els = {
 
 let ocrLastStatus = "";
 let ocrErrorShown = false;
+let mainStallTimer = null;
 const OCR_WATCHDOG_MS_MOBILE = 60000;
 const OCR_WATCHDOG_MS_DESKTOP = 90000;
 const OCR_STALL_MS_MOBILE = 8000;
@@ -503,6 +507,54 @@ function startOcrWatchdog() {
   }
 }
 
+function stopMainStallMonitor() {
+  if (mainStallTimer) {
+    clearInterval(mainStallTimer);
+    mainStallTimer = null;
+  }
+}
+
+function startMainStallMonitor() {
+  stopMainStallMonitor();
+  const stallMs = isMobileDevice() ? OCR_STALL_MS_MOBILE : OCR_STALL_MS_DESKTOP;
+  mainStallTimer = setInterval(function () {
+    if (!window.__ocrScanActive || window.__ocrErrorShown) return;
+    const stalled = Date.now() - (window.__ocrLastProgressAt || 0);
+    if (stalled < stallMs) return;
+    const msg =
+      "识别卡住：" +
+      (window.__ocrLastProgressMsg || "未知步骤") +
+      "（已 " +
+      Math.round(stalled / 1000) +
+      " 秒）";
+    const log = (window.__lotteryOcrDiag || []).join("\n");
+    pushOcrDiag("main stall monitor fired");
+    if (window.__showOcrFatal) {
+      window.__showOcrFatal(msg, log);
+    } else {
+      showOcrErrorDialog(new Error(msg));
+    }
+  }, 1000);
+}
+
+function withOcrTimeout(promise) {
+  const ms = isMobileDevice()
+    ? OCR_TOTAL_TIMEOUT_MS_MOBILE
+    : OCR_TOTAL_TIMEOUT_MS_DESKTOP;
+  return Promise.race([
+    promise,
+    new Promise(function (_, reject) {
+      setTimeout(function () {
+        reject(
+          new Error(
+            "识别总超时（已等待 " + Math.round(ms / 1000) + " 秒，请刷新重试）"
+          )
+        );
+      }, ms);
+    }),
+  ]);
+}
+
 function stopOcrWatchdog() {
   if (window.LotteryOcrWatchdog) {
     window.LotteryOcrWatchdog.stop();
@@ -530,7 +582,7 @@ function openOcrErrorFromBanner() {
 }
 
 function showOcrErrorDialog(err) {
-  if (ocrErrorShown || window.__ocrErrorShown) return;
+  if (ocrErrorShown && window.__ocrErrorShown) return;
   ocrErrorShown = true;
   window.__ocrErrorShown = true;
   const msg = (err && err.message) || String(err || "识别失败");
@@ -547,6 +599,10 @@ function showOcrErrorDialog(err) {
     .join("\n");
 
   setOcrStatus(msg, true);
+  if (window.__showOcrFatal) {
+    window.__showOcrFatal(msg, logText);
+    return;
+  }
   if (els.ocrErrorModal && els.ocrErrorMessage && els.ocrErrorLog) {
     els.ocrErrorMessage.textContent = msg;
     els.ocrErrorLog.textContent = logText;
@@ -787,14 +843,18 @@ async function handleOcrFile(file) {
   setOcrStatus("准备识别...", false, 0);
   els.ocrRawWrap.classList.add("hidden");
   startOcrWatchdog();
+  startMainStallMonitor();
 
   try {
-    const result = await window.LotteryOcr.recognizeLotteryImage(
-      file,
-      els.lotteryType.value,
-      onOcrProgress
+    const result = await withOcrTimeout(
+      window.LotteryOcr.recognizeLotteryImage(
+        file,
+        els.lotteryType.value,
+        onOcrProgress
+      )
     );
     stopOcrWatchdog();
+    stopMainStallMonitor();
 
     els.ocrPreview.src = result.previewUrl;
     els.ocrPreviewWrap.classList.remove("hidden");
@@ -830,12 +890,14 @@ async function handleOcrFile(file) {
     });
   } catch (err) {
     stopOcrWatchdog();
+    stopMainStallMonitor();
     if (window.LotteryOcr && window.LotteryOcr.resetEngine) {
       window.LotteryOcr.resetEngine();
     }
     showOcrErrorDialog(err);
   } finally {
     window.__ocrScanActive = false;
+    stopMainStallMonitor();
     if (els.cameraInput) els.cameraInput.value = "";
     if (els.galleryInput) els.galleryInput.value = "";
   }

@@ -687,7 +687,7 @@
   }
 
   const MAX_IMAGE_EDGE = 1200;
-  const MOBILE_MAX_IMAGE_EDGE = 640;
+  const MOBILE_MAX_IMAGE_EDGE = 480;
   const IMAGE_LOAD_TIMEOUT_MS = 15000;
   const PREPROCESS_STEP_TIMEOUT_MS = 20000;
   const CANVAS_ENCODE_TIMEOUT_MS = 12000;
@@ -755,15 +755,25 @@
   }
 
   function isMobileLike() {
-    const touch =
-      typeof navigator !== "undefined" &&
-      (navigator.maxTouchPoints > 0 ||
-        /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent || ""));
-    const narrow =
+    const ua = navigator.userAgent || "";
+    if (/Android|iPhone|iPad|iPod|Mobile|HarmonyOS|Windows Phone/i.test(ua)) {
+      return true;
+    }
+    if (/EdgA|EdgiOS|Edge\//i.test(ua) && /Mobile|Mobi/i.test(ua)) {
+      return true;
+    }
+    if (typeof navigator !== "undefined" && navigator.maxTouchPoints > 0) {
+      return true;
+    }
+    if (
       typeof window !== "undefined" &&
       window.matchMedia &&
-      window.matchMedia("(max-width: 768px)").matches;
-    return !!(touch || narrow);
+      (window.matchMedia("(pointer: coarse)").matches ||
+        window.matchMedia("(max-width: 900px)").matches)
+    ) {
+      return true;
+    }
+    return false;
   }
 
   function shouldUsePerspectiveCorrection() {
@@ -1120,14 +1130,59 @@
     return base;
   }
 
+  async function loadImageToCanvas(file, maxEdge) {
+    if (typeof createImageBitmap === "function") {
+      const bitmap = await withTimeout(
+        createImageBitmap(file, {
+          resizeWidth: maxEdge,
+          resizeHeight: maxEdge,
+          resizeQuality: "medium",
+        }),
+        IMAGE_LOAD_TIMEOUT_MS,
+        "图片读取超时，请换一张较小的照片"
+      );
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      if (typeof bitmap.close === "function") bitmap.close();
+      return canvas;
+    }
+    return loadImageFromFile(file, function () {});
+  }
+
+  async function preprocessImageMobile(file, report, lotteryType) {
+    pulseProgress(report, 4, "正在读取图片...");
+    await yieldToMain();
+    const canvas = await loadImageToCanvas(file, MOBILE_MAX_IMAGE_EDGE);
+    pulseProgress(report, 8, "正在编码图片...");
+    await yieldToMain();
+    let crop = canvas;
+    if (lotteryType === "ssq") {
+      pulseProgress(report, 10, "裁剪号码区...");
+      await yieldToMain();
+      crop = cropSsqNumberZoneFast(canvas);
+    }
+    const dataUrl = await canvasToDataUrlAsync(crop, CANVAS_ENCODE_TIMEOUT_MS);
+    pulseProgress(report, 14, "图片就绪，正在加载 OCR...");
+    return {
+      previewUrl: dataUrl,
+      variants: [{ id: "mobile-fast", dataUrl: dataUrl }],
+      ssqStrips: [],
+    };
+  }
+
   async function preprocessImage(file, report, lotteryType) {
+    if (isMobileLike()) {
+      return preprocessImageMobile(file, report, lotteryType);
+    }
     const scaled = await loadImageFromFile(file, report);
-    report(6, "正在预处理图片...");
+    pulseProgress(report, 6, "正在预处理图片...");
     await yieldToMain();
     const base = await prepareTicketCanvas(scaled, report);
-    report(34, "预处理完成");
+    pulseProgress(report, 34, "预处理完成");
     await yieldToMain();
-    report(35, "正在分析号码区域...");
+    pulseProgress(report, 35, "正在分析号码区域...");
     await yieldToMain();
     return buildPreprocessVariantsFromCanvasAsync(base, lotteryType, report);
   }

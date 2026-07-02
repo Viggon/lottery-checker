@@ -8,13 +8,25 @@
     <script>
       (function () {
         var stallMs = 8000;
-        function showStall() {
+        function fire(msg, log) {
           try {
             var p = parent;
-            if (!p || !p.__ocrScanActive || p.__ocrErrorShown) return;
+            p.__ocrErrorShown = true;
+            if (typeof p.__showOcrFatal === "function") {
+              p.__showOcrFatal(msg, log);
+              return;
+            }
+          } catch (e1) {}
+          try {
+            parent.postMessage({ type: "ocr-stall", msg: msg, log: log }, "*");
+          } catch (e2) {}
+        }
+        function check() {
+          try {
+            var p = parent;
+            if (!p.__ocrScanActive || p.__ocrErrorShown) return;
             var stalled = Date.now() - (p.__ocrLastProgressAt || 0);
             if (stalled < stallMs) return;
-            p.__ocrErrorShown = true;
             var stuckMsg = p.__ocrLastProgressMsg || "未知步骤";
             var errMsg =
               "识别卡住：" +
@@ -22,43 +34,19 @@
               "（已 " +
               Math.round(stalled / 1000) +
               " 秒无进展）";
-            var d = p.document;
-            var banner = d.getElementById("ocrStallBanner");
-            var bannerText = d.getElementById("ocrStallBannerText");
-            if (banner && bannerText) {
-              bannerText.textContent = errMsg;
-              banner.classList.remove("hidden");
-            }
-            var modal = d.getElementById("ocrErrorModal");
-            var msgEl = d.getElementById("ocrErrorMessage");
-            var logEl = d.getElementById("ocrErrorLog");
-            var boot = d.getElementById("bootOverlay");
-            if (boot) boot.classList.add("hidden");
-            if (modal && msgEl && logEl) {
-              msgEl.textContent = errMsg;
-              var snap = {
-                version: p.__appVersion || "?",
-                lastStatus: stuckMsg,
-                stalledSec: Math.round(stalled / 1000),
-                cvReady: !!(p.cv && p.cv.Mat),
-                ua: p.navigator.userAgent,
-              };
-              logEl.textContent = (p.__lotteryOcrDiag || [])
-                .concat(["---", JSON.stringify(snap, null, 2)])
-                .join("\n");
-              modal.classList.remove("hidden");
-              modal.setAttribute("aria-hidden", "false");
-              d.body.style.overflow = "hidden";
-            }
-            try {
-              if (p.navigator.vibrate) p.navigator.vibrate([300, 120, 300]);
-            } catch (e1) {}
-            try {
-              p.document.title = "⚠ 识别卡住";
-            } catch (e2) {}
+            var snap = {
+              version: p.__appVersion || "?",
+              lastStatus: stuckMsg,
+              cvReady: !!(p.cv && p.cv.Mat),
+              ua: p.navigator.userAgent,
+            };
+            var log = (p.__lotteryOcrDiag || [])
+              .concat(["---", JSON.stringify(snap, null, 2)])
+              .join("\n");
+            fire(errMsg, log);
           } catch (e) {}
         }
-        setInterval(showStall, 500);
+        setInterval(check, 500);
       })();
     </script>
   </body>

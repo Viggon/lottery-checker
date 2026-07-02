@@ -11,8 +11,87 @@
     <meta name="theme-color" content="#f7f4ff" />
     <title>福彩开奖对照</title>
     <link rel="stylesheet" href="./style.css" />
+    <script>
+      window.__showOcrFatal = function (msg, log) {
+        window.__ocrErrorShown = true;
+        window.__ocrScanActive = false;
+        var boot = document.getElementById("bootOverlay");
+        if (boot) boot.classList.add("hidden");
+        var banner = document.getElementById("ocrStallBanner");
+        if (banner) banner.classList.remove("hidden");
+        var bannerText = document.getElementById("ocrStallBannerText");
+        if (bannerText) bannerText.textContent = msg || "识别失败";
+        var overlay = document.getElementById("ocrFatalOverlay");
+        var msgEl = document.getElementById("ocrFatalMsg");
+        var logEl = document.getElementById("ocrFatalLog");
+        if (overlay && msgEl) {
+          msgEl.textContent = msg || "识别失败";
+          if (logEl) logEl.textContent = log || "";
+          overlay.style.display = "flex";
+          document.body.style.overflow = "hidden";
+        }
+        try {
+          if (navigator.vibrate) navigator.vibrate([400, 120, 400]);
+        } catch (e) {}
+      };
+      window.addEventListener("message", function (e) {
+        if (e.data && e.data.type === "ocr-stall") {
+          window.__showOcrFatal(e.data.msg, e.data.log);
+        }
+      });
+    </script>
   </head>
   <body>
+    <div
+      id="ocrFatalOverlay"
+      style="
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        background: rgba(30, 0, 0, 0.94);
+        color: #fff;
+        flex-direction: column;
+        padding: 20px;
+        box-sizing: border-box;
+        overflow: auto;
+      "
+    >
+      <h2 style="margin: 0 0 12px; font-size: 1.2rem">识别失败</h2>
+      <p id="ocrFatalMsg" style="margin: 0 0 12px; font-size: 1rem; line-height: 1.5"></p>
+      <pre
+        id="ocrFatalLog"
+        style="
+          flex: 1;
+          margin: 0;
+          padding: 10px;
+          font-size: 11px;
+          line-height: 1.4;
+          background: rgba(0, 0, 0, 0.35);
+          border-radius: 8px;
+          overflow: auto;
+          white-space: pre-wrap;
+          word-break: break-all;
+        "
+      ></pre>
+      <button
+        type="button"
+        onclick="document.getElementById('ocrFatalOverlay').style.display='none';document.body.style.overflow=''"
+        style="
+          margin-top: 14px;
+          padding: 14px;
+          font-size: 1rem;
+          border: none;
+          border-radius: 10px;
+          background: #ff6b9d;
+          color: #fff;
+          font-weight: 700;
+        "
+      >
+        关闭
+      </button>
+    </div>
+
     <div id="bootOverlay" class="boot-overlay" aria-hidden="false">
       <div class="boot-overlay-inner">
         <p class="boot-title">正在初始化识别引擎</p>
