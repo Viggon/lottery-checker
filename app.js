@@ -51,6 +51,7 @@ const LOTTERY = {
       const blueHit = ticket.blue === draw.blue;
       let level = 0;
       let name = "未中奖";
+      let fuyunStatus = "none";
       if (redHit === 6 && blueHit) {
         level = 1;
         name = "一等奖";
