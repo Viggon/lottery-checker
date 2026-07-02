@@ -1,4 +1,4 @@
-const APP_VERSION = "1.5.3";
+const APP_VERSION = "1.5.4";
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const FETCH_TIMEOUT_MS = 15000;
@@ -339,7 +339,18 @@ const els = {
   menuBackdrop: document.getElementById("menuBackdrop"),
   currentLotteryLabel: document.getElementById("currentLotteryLabel"),
   appVersion: document.getElementById("appVersion"),
+  ocrErrorModal: document.getElementById("ocrErrorModal"),
+  ocrErrorMessage: document.getElementById("ocrErrorMessage"),
+  ocrErrorLog: document.getElementById("ocrErrorLog"),
+  ocrErrorClose: document.getElementById("ocrErrorClose"),
+  ocrErrorBackdrop: document.getElementById("ocrErrorBackdrop"),
 };
+
+let ocrWatchdogWorker = null;
+let ocrLastStatus = "";
+let ocrErrorShown = false;
+const OCR_WATCHDOG_MS_MOBILE = 120000;
+const OCR_WATCHDOG_MS_DESKTOP = 180000;
 
 function normalize2(value) {
   const n = String(value).trim();
@@ -457,7 +468,116 @@ function setOcrStatus(text, isError = false, percent) {
 }
 
 function onOcrProgress(message, percent) {
+  ocrLastStatus = message;
+  pushOcrDiag((percent != null ? percent + "% " : "") + message);
   setOcrStatus(message, false, percent);
+}
+
+function pushOcrDiag(message) {
+  const log = window.__lotteryOcrDiag || (window.__lotteryOcrDiag = []);
+  const line = new Date().toISOString().slice(11, 19) + " " + message;
+  log.push(line);
+  if (log.length > 100) log.shift();
+}
+
+function isMobileDevice() {
+  return /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent || "");
+}
+
+function startOcrWatchdog() {
+  stopOcrWatchdog();
+  const ms = isMobileDevice() ? OCR_WATCHDOG_MS_MOBILE : OCR_WATCHDOG_MS_DESKTOP;
+  pushOcrDiag("watchdog start " + ms + "ms");
+  const workerCode =
+    "self.onmessage=function(e){setTimeout(function(){self.postMessage('timeout')},e.data)};";
+  const worker = new Worker(
+    URL.createObjectURL(new Blob([workerCode], { type: "application/javascript" }))
+  );
+  worker.onmessage = function () {
+    pushOcrDiag("watchdog timeout fired");
+    const err = new Error(
+      "识别引擎加载超时（已等待 " + Math.round(ms / 1000) + " 秒，请换 WiFi 后重试）"
+    );
+    if (window.LotteryOcr && window.LotteryOcr.resetEngine) {
+      window.LotteryOcr.resetEngine();
+    }
+    showOcrErrorDialog(err);
+    stopOcrWatchdog();
+  };
+  worker.postMessage(ms);
+  ocrWatchdogWorker = worker;
+}
+
+function stopOcrWatchdog() {
+  if (ocrWatchdogWorker) {
+    ocrWatchdogWorker.terminate();
+    ocrWatchdogWorker = null;
+  }
+}
+
+function closeOcrErrorDialog() {
+  if (!els.ocrErrorModal) return;
+  els.ocrErrorModal.classList.add("hidden");
+  els.ocrErrorModal.setAttribute("aria-hidden", "true");
+  document.body.style.overflow = "";
+}
+
+function showOcrErrorDialog(err) {
+  if (ocrErrorShown) return;
+  ocrErrorShown = true;
+  const msg = (err && err.message) || String(err || "识别失败");
+  const snapshot = {
+    version: APP_VERSION,
+    lastStatus: ocrLastStatus,
+    cvReady: !!(window.cv && window.cv.Mat),
+    opencvScript: !!document.querySelector('script[data-lottery-opencv="1"]'),
+    paddleEngine: !!(window.LotteryOcrEngine),
+    ua: navigator.userAgent,
+  };
+  const logText = (window.__lotteryOcrDiag || [])
+    .concat(["---", JSON.stringify(snapshot, null, 2)])
+    .join("\n");
+
+  setOcrStatus(msg, true);
+  if (els.ocrErrorModal && els.ocrErrorMessage && els.ocrErrorLog) {
+    els.ocrErrorMessage.textContent = msg;
+    els.ocrErrorLog.textContent = logText;
+    els.ocrErrorModal.classList.remove("hidden");
+    els.ocrErrorModal.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+    return;
+  }
+  window.alert(msg + "\n\n" + logText.slice(-1800));
+}
+
+function preloadOcrAssets() {
+  pushOcrDiag("preload start");
+  if (!document.querySelector('script[data-lottery-opencv="1"]')) {
+    const opencvScript = document.createElement("script");
+    opencvScript.src = "./vendor/opencv/opencv.js";
+    opencvScript.async = true;
+    opencvScript.dataset.lotteryOpencv = "1";
+    opencvScript.onload = function () {
+      pushOcrDiag("preload opencv onload cv=" + !!(window.cv && window.cv.Mat));
+    };
+    opencvScript.onerror = function () {
+      pushOcrDiag("preload opencv onerror");
+    };
+    document.head.appendChild(opencvScript);
+  }
+  if (!window.__lotteryPaddlePreload) {
+    window.__lotteryPaddlePreload = true;
+    const paddleScript = document.createElement("script");
+    paddleScript.type = "module";
+    paddleScript.src = "./vendor/paddle-ocr.js";
+    paddleScript.onload = function () {
+      pushOcrDiag("preload paddle onload");
+    };
+    paddleScript.onerror = function () {
+      pushOcrDiag("preload paddle onerror");
+    };
+    document.head.appendChild(paddleScript);
+  }
 }
 
 function setStatus(text, isError = false) {
@@ -657,8 +777,12 @@ function resetOcrSession() {
 async function handleOcrFile(file) {
   if (!file) return;
   resetOcrSession();
+  window.__lotteryOcrDiag = [];
+  ocrErrorShown = false;
+  pushOcrDiag("scan start " + file.name + " " + file.size + "b");
   setOcrStatus("准备识别...", false, 0);
   els.ocrRawWrap.classList.add("hidden");
+  startOcrWatchdog();
 
   try {
     const result = await window.LotteryOcr.recognizeLotteryImage(
@@ -666,6 +790,7 @@ async function handleOcrFile(file) {
       els.lotteryType.value,
       onOcrProgress
     );
+    stopOcrWatchdog();
 
     els.ocrPreview.src = result.previewUrl;
     els.ocrPreviewWrap.classList.remove("hidden");
@@ -700,7 +825,8 @@ async function handleOcrFile(file) {
       block: "start",
     });
   } catch (err) {
-    setOcrStatus(err.message || "识别失败", true);
+    stopOcrWatchdog();
+    showOcrErrorDialog(err);
   } finally {
     if (els.cameraInput) els.cameraInput.value = "";
     if (els.galleryInput) els.galleryInput.value = "";
@@ -1051,9 +1177,12 @@ bindScanInputs();
 els.menuBtn.addEventListener("click", openMenu);
 els.menuClose.addEventListener("click", closeMenu);
 els.menuBackdrop.addEventListener("click", closeMenu);
+if (els.ocrErrorClose) els.ocrErrorClose.addEventListener("click", closeOcrErrorDialog);
+if (els.ocrErrorBackdrop) els.ocrErrorBackdrop.addEventListener("click", closeOcrErrorDialog);
 
 onTypeChange();
 loadAccessInfo();
+preloadOcrAssets();
 if (els.appVersion) {
   els.appVersion.textContent = "v" + APP_VERSION;
 }

@@ -134,6 +134,16 @@
       </div>
     </div>
 
+    <div id="ocrErrorModal" class="ocr-error-modal hidden" aria-hidden="true" role="alertdialog" aria-labelledby="ocrErrorTitle">
+      <div id="ocrErrorBackdrop" class="ocr-error-backdrop"></div>
+      <div class="ocr-error-sheet">
+        <h3 id="ocrErrorTitle">识别失败</h3>
+        <p id="ocrErrorMessage" class="ocr-error-message"></p>
+        <pre id="ocrErrorLog" class="ocr-error-log"></pre>
+        <button type="button" id="ocrErrorClose" class="btn btn-primary ocr-error-close">关闭</button>
+      </div>
+    </div>
+
     <script src="./ocr.js"></script>
     <script src="./app.js"></script>
   </body>

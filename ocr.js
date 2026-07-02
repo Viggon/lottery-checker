@@ -70,6 +70,18 @@
     return ocrEngineReady;
   }
 
+  function resetOcrEngine() {
+    ocrEngineReady = null;
+    paddleBundlePromise = null;
+    global.__lotteryOpenCvPromise = null;
+    if (
+      global.LotteryOcrEngine &&
+      typeof global.LotteryOcrEngine.resetEngine === "function"
+    ) {
+      global.LotteryOcrEngine.resetEngine();
+    }
+  }
+
   async function recognizeDataUrl(dataUrl) {
     const engineMod = await ensureOcrEngineModule();
     return engineMod.recognizeDataUrl(dataUrl);
@@ -1958,5 +1970,6 @@
     recognizeLotteryImage: recognizeLotteryImage,
     parseTextToLines: parseTextToLines,
     detectLotteryType: detectLotteryType,
+    resetEngine: resetOcrEngine,
   };
 })(window);
