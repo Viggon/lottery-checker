@@ -687,7 +687,7 @@
   }
 
   const MAX_IMAGE_EDGE = 1200;
-  const MOBILE_MAX_IMAGE_EDGE = 480;
+  const MOBILE_MAX_IMAGE_EDGE = 800;
   const IMAGE_LOAD_TIMEOUT_MS = 15000;
   const PREPROCESS_STEP_TIMEOUT_MS = 20000;
   const CANVAS_ENCODE_TIMEOUT_MS = 12000;
@@ -1151,25 +1151,70 @@
     return loadImageFromFile(file, function () {});
   }
 
+  async function buildMobilePreprocessResult(canvas, lotteryType, report) {
+    let ssqStrips = [];
+    const variants = [];
+
+    if (lotteryType === "ssq") {
+      pulseProgress(report, 10, "分析号码行布局...");
+      await yieldToMain();
+      ssqStrips = extractSsqLayoutRowStrips(canvas).map(function (strip) {
+        return {
+          id: strip.id,
+          dataUrl: strip.dataUrl,
+          source: strip.source || "layout",
+        };
+      });
+
+      const zone = cropSsqNumberZoneFast(canvas);
+      const scale = Math.min(2.2, 960 / Math.max(zone.width, zone.height));
+      const zoneScaled = scale > 1 ? scaleCanvas(zone, scale) : zone;
+      const contrast = renderVariant(
+        zoneScaled,
+        0,
+        0,
+        zoneScaled.width,
+        zoneScaled.height,
+        "contrast"
+      );
+
+      pulseProgress(report, 12, "编码识别图...");
+      await yieldToMain();
+      variants.push({
+        id: "mobile-zone",
+        dataUrl: await canvasToDataUrlAsync(zoneScaled, CANVAS_ENCODE_TIMEOUT_MS),
+      });
+      variants.push({
+        id: "mobile-zone-contrast",
+        dataUrl: await canvasToDataUrlAsync(contrast, CANVAS_ENCODE_TIMEOUT_MS),
+      });
+    } else {
+      pulseProgress(report, 10, "裁剪号码区...");
+      await yieldToMain();
+      variants.push({
+        id: "mobile-fast",
+        dataUrl: await canvasToDataUrlAsync(canvas, CANVAS_ENCODE_TIMEOUT_MS),
+      });
+    }
+
+    const previewUrl = variants[0]
+      ? variants[0].dataUrl
+      : await canvasToDataUrlAsync(canvas, CANVAS_ENCODE_TIMEOUT_MS);
+    pulseProgress(report, 14, "图片就绪，正在加载 OCR...");
+    return {
+      previewUrl: previewUrl,
+      variants: variants,
+      ssqStrips: ssqStrips,
+    };
+  }
+
   async function preprocessImageMobile(file, report, lotteryType) {
     pulseProgress(report, 4, "正在读取图片...");
     await yieldToMain();
     const canvas = await loadImageToCanvas(file, MOBILE_MAX_IMAGE_EDGE);
     pulseProgress(report, 8, "正在编码图片...");
     await yieldToMain();
-    let crop = canvas;
-    if (lotteryType === "ssq") {
-      pulseProgress(report, 10, "裁剪号码区...");
-      await yieldToMain();
-      crop = cropSsqNumberZoneFast(canvas);
-    }
-    const dataUrl = await canvasToDataUrlAsync(crop, CANVAS_ENCODE_TIMEOUT_MS);
-    pulseProgress(report, 14, "图片就绪，正在加载 OCR...");
-    return {
-      previewUrl: dataUrl,
-      variants: [{ id: "mobile-fast", dataUrl: dataUrl }],
-      ssqStrips: [],
-    };
+    return buildMobilePreprocessResult(canvas, lotteryType, report);
   }
 
   async function preprocessImage(file, report, lotteryType) {
@@ -1207,30 +1252,13 @@
 
   async function buildPreprocessVariantsFromCanvasAsync(base, lotteryType, report) {
     if (isMobileLike()) {
-      pulseProgress(report, 36, "手机快速模式：缩小图片...");
+      pulseProgress(report, 36, "手机模式：准备识别图...");
       await yieldToMain();
       const maxEdge = MOBILE_MAX_IMAGE_EDGE;
       const scale = Math.min(1, maxEdge / Math.max(base.width, base.height));
       const small = scale < 1 ? scaleCanvas(base, scale) : base;
       await yieldToMain();
-
-      pulseProgress(report, 38, "手机快速模式：裁剪号码区...");
-      await yieldToMain();
-      var crop = small;
-      if (lotteryType === "ssq") {
-        crop = cropSsqNumberZoneFast(small);
-      }
-      await yieldToMain();
-
-      pulseProgress(report, 40, "手机快速模式：编码图片...");
-      await yieldToMain();
-      const dataUrl = await canvasToDataUrlAsync(crop, CANVAS_ENCODE_TIMEOUT_MS);
-      pulseProgress(report, 42, "图片准备完成，正在加载 OCR...");
-      return {
-        previewUrl: dataUrl,
-        variants: [{ id: "mobile-fast", dataUrl: dataUrl }],
-        ssqStrips: [],
-      };
+      return buildMobilePreprocessResult(small, lotteryType, report);
     }
 
     pulseProgress(report, 36, "正在分析票面布局...");
@@ -1487,7 +1515,6 @@
   function extractSsqRowStripsFromCanvas(base) {
     const layoutStrips = extractSsqLayoutRowStrips(base);
     if (layoutStrips.length) return layoutStrips;
-    if (isMobileLike()) return [];
 
     const top = Math.round(base.height * 0.2);
     const height = Math.round(base.height * 0.72);
@@ -1989,6 +2016,15 @@
 
   const SSQ_STRIP_HIT_RATE = 0.4;
 
+  function shouldSkipSupplementalZoneOcr(stripLines, stripCount) {
+    if (stripCount < 2) return false;
+    if (stripLines.length < 3) return false;
+    if (stripCount >= 4 && stripLines.length >= Math.ceil(stripCount * 0.75)) {
+      return true;
+    }
+    return stripLines.length / stripCount >= SSQ_STRIP_HIT_RATE;
+  }
+
   function collectParsedLineVotes(texts, lotteryType) {
     const votes = {};
     const firstSeen = {};
@@ -2109,8 +2145,10 @@
         : 0;
     const ssqFastDone =
       lotteryType === "ssq" &&
-      stripResult.lines.length > 0 &&
-      stripHitRate >= SSQ_STRIP_HIT_RATE;
+      shouldSkipSupplementalZoneOcr(
+        stripResult.lines,
+        prepared.ssqStrips ? prepared.ssqStrips.length : 0
+      );
 
     let ocrTexts = [];
     if (!ssqFastDone) {
