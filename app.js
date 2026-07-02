@@ -1,4 +1,4 @@
-const APP_VERSION = "1.9.4";
+const APP_VERSION = "1.9.6";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -482,7 +482,7 @@ async function openCwlOfficialUrl(url) {
   setStatus(
     copied
       ? "已打开福彩官网；若提示访问异常，链接已复制，请粘贴到 Safari 地址栏打开"
-      : "已打开福彩官网；若提示访问异常，请手动访问 www.cwl.gov.cn",
+      : "已打开福彩开奖公告；若提示访问异常，请手动访问 www.cwl.gov.cn/html5/ygkj/wqkjgg/ssq/",
     false
   );
 }
