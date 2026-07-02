@@ -1,4 +1,4 @@
-const APP_VERSION = "1.8.3";
+const APP_VERSION = "1.8.4";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -738,10 +738,23 @@ function sleep(ms) {
   });
 }
 
-function getLatestRawDraw(data) {
-  const list = data.data?.list || [];
+function getHuiniaoWrap(payload) {
+  const outer = payload && payload.data ? payload.data : payload || {};
+  if (outer && outer.data && (outer.data.list || outer.data.data)) {
+    return outer.data;
+  }
+  return outer;
+}
+
+function getHuiniaoDrawList(payload) {
+  const wrap = getHuiniaoWrap(payload);
+  return wrap.data?.list || wrap.list || [];
+}
+
+function getLatestRawDraw(huiniao) {
+  const list = huiniao.data?.data?.list || huiniao.data?.list || [];
   if (list.length) return list[0];
-  return data.data?.last || null;
+  return huiniao.data?.last || huiniao.data?.data?.last || null;
 }
 
 function validateOnlineDraw(type, raw) {
@@ -990,7 +1003,7 @@ async function applyIssueSelection() {
     if (draw) {
       mergeDrawIntoList(draw);
       renderIssueTabs(state.draws);
-      setIssueInputs(wantedIssue);
+      setIssueSelection(wantedIssue);
     }
   }
 
@@ -1126,10 +1139,10 @@ function parseDrawList(payload, type) {
   if (payload.source === "cwl" || payload.source === "中国福利彩票官网") {
     return (payload.data.result || []).map(cfg.normalizeDraw);
   }
-  const root = payload.data || {};
-  const list = root.data?.list || root.list || [];
+  const list = getHuiniaoDrawList(payload);
   if (list.length) return list.map(cfg.normalizeDraw);
-  const last = root.last || root.data?.last;
+  const wrap = getHuiniaoWrap(payload);
+  const last = wrap.last;
   return last ? [cfg.normalizeDraw(last)] : [];
 }
 
@@ -1184,10 +1197,9 @@ async function fetchDrawHistory(type, minCount) {
 }
 
 function parseNextDraw(payload, type) {
-  const raw =
-    payload.data?.data?.list?.[0] ||
-    payload.data?.data?.last ||
-    payload.data?.last;
+  const list = getHuiniaoDrawList(payload);
+  const wrap = getHuiniaoWrap(payload);
+  const raw = list[0] || wrap.last || payload.data?.last;
   if (!raw) return computeNextDrawFromSchedule(type);
 
   const issue = raw.next_code || raw.nextCode;
