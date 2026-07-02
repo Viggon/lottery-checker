@@ -689,7 +689,7 @@
 
   const MAX_IMAGE_EDGE = 1200;
   const MOBILE_MAX_IMAGE_EDGE = 960;
-  const EDGE_MAX_IMAGE_EDGE = 560;
+  const EDGE_MAX_IMAGE_EDGE = 640;
   const IMAGE_LOAD_TIMEOUT_MS = 15000;
   const PREPROCESS_STEP_TIMEOUT_MS = 20000;
   const CANVAS_ENCODE_TIMEOUT_MS = 12000;
@@ -1170,22 +1170,31 @@
     const variants = [];
 
     if (lotteryType === "ssq" && isLowMemoryOcrMode()) {
-      pulseProgress(report, 10, "Edge 精简模式：裁剪号码区...");
+      pulseProgress(report, 10, "Edge 模式：分析号码行...");
       await yieldToMain();
+      ssqStrips = extractSsqLayoutRowStrips(canvas).map(function (strip) {
+        return {
+          id: strip.id,
+          dataUrl: strip.dataUrl,
+          dataUrls: strip.dataUrls || [strip.dataUrl],
+          source: strip.source || "layout",
+        };
+      });
+
       const zone = cropSsqNumberZoneFast(canvas);
       const scale = Math.min(1.6, 640 / Math.max(zone.width, zone.height));
       const zoneScaled = scale > 1 ? scaleCanvas(zone, scale) : zone;
       pulseProgress(report, 12, "编码识别图...");
       await yieldToMain();
-      const dataUrl = await canvasToDataUrlAsync(
+      const fallbackUrl = await canvasToDataUrlAsync(
         zoneScaled,
         CANVAS_ENCODE_TIMEOUT_MS
       );
       pulseProgress(report, 14, "图片就绪，正在加载 OCR...");
       return {
-        previewUrl: dataUrl,
-        variants: [{ id: "edge-zone", dataUrl: dataUrl }],
-        ssqStrips: [],
+        previewUrl: fallbackUrl,
+        variants: [{ id: "edge-fallback-zone", dataUrl: fallbackUrl }],
+        ssqStrips: ssqStrips,
         edgeLite: true,
       };
     }
@@ -2313,41 +2322,115 @@
     return { lines: lines, linesByIndex: linesByIndex, votes: votes };
   }
 
+  function ocrItemCenter(item) {
+    const poly = item.poly || [];
+    if (!poly.length) return { x: 0, y: 0 };
+    let sx = 0;
+    let sy = 0;
+    poly.forEach(function (p) {
+      sx += p.x;
+      sy += p.y;
+    });
+    return { x: sx / poly.length, y: sy / poly.length };
+  }
+
+  function ocrItemHeight(item) {
+    const poly = item.poly || [];
+    if (!poly.length) return 14;
+    let minY = poly[0].y;
+    let maxY = poly[0].y;
+    poly.forEach(function (p) {
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    });
+    return maxY - minY;
+  }
+
+  function groupOcrItemsByRow(items) {
+    if (!items || !items.length) return [];
+
+    const sorted = items.slice().sort(function (a, b) {
+      return ocrItemCenter(a).y - ocrItemCenter(b).y;
+    });
+    const rows = [];
+
+    sorted.forEach(function (item) {
+      const center = ocrItemCenter(item);
+      const threshold = Math.max(10, ocrItemHeight(item) * 0.55);
+      let row = null;
+
+      for (let i = 0; i < rows.length; i += 1) {
+        if (Math.abs(rows[i].cy - center.y) < threshold) {
+          row = rows[i];
+          break;
+        }
+      }
+
+      if (!row) {
+        row = { cy: center.y, items: [] };
+        rows.push(row);
+      } else {
+        row.cy =
+          (row.cy * row.items.length + center.y) / (row.items.length + 1);
+      }
+      row.items.push(item);
+    });
+
+    rows.sort(function (a, b) {
+      return a.cy - b.cy;
+    });
+
+    return rows.map(function (row) {
+      row.items.sort(function (a, b) {
+        return ocrItemCenter(a).x - ocrItemCenter(b).x;
+      });
+      return row.items
+        .map(function (item) {
+          return item.text || "";
+        })
+        .join(" ");
+    });
+  }
+
   function parseSsqFromOcrResult(result) {
     const texts = [];
     if (result && result.text) texts.push(result.text);
+
     if (result && result.items && result.items.length) {
+      groupOcrItemsByRow(result.items).forEach(function (rowText) {
+        if (!rowText.trim()) return;
+        texts.push(rowText);
+        const line = parseSsqStripText(rowText);
+        if (line) texts.push(line);
+      });
+
       const fromItems = parseSsqStripFromItems(result.items);
       if (fromItems) texts.push(fromItems);
-      const sorted = result.items.slice().sort(function (a, b) {
-        const ay =
-          a.poly.reduce(function (s, p) {
-            return s + p.y;
-          }, 0) / a.poly.length;
-        const by =
-          b.poly.reduce(function (s, p) {
-            return s + p.y;
-          }, 0) / b.poly.length;
-        if (Math.abs(ay - by) > 10) return ay - by;
-        const ax =
-          a.poly.reduce(function (s, p) {
-            return s + p.x;
-          }, 0) / a.poly.length;
-        const bx =
-          b.poly.reduce(function (s, p) {
-            return s + p.x;
-          }, 0) / b.poly.length;
-        return ax - bx;
-      });
+
       texts.push(
-        sorted
+        result.items
+          .slice()
+          .sort(function (a, b) {
+            const ac = ocrItemCenter(a);
+            const bc = ocrItemCenter(b);
+            if (Math.abs(ac.y - bc.y) > 10) return ac.y - bc.y;
+            return ac.x - bc.x;
+          })
           .map(function (item) {
             return item.text || "";
           })
           .join("\n")
       );
     }
-    return collectParsedLineVotes(texts, "ssq");
+
+    const parsed = collectParsedLineVotes(texts, "ssq");
+    if (parsed.lines.length >= 3) return parsed;
+
+    const streamLines = parseSsqLines((result && result.text) || "");
+    if (streamLines.length > parsed.lines.length) {
+      return { lines: streamLines.slice(0, 5), votes: parsed.votes };
+    }
+    return parsed;
   }
 
   async function recognizeLotteryImage(file, lotteryType, onProgress) {
@@ -2366,23 +2449,40 @@
     await loadOcrEngine(report);
 
     if (prepared.edgeLite) {
-      report(40, "Edge 精简模式：识别号码区（单次）...");
-      global.__ocrLastProgressAt = Date.now();
-      global.__ocrLastProgressMsg = "Edge 精简模式识别中";
-      const ocrResultData = await recognizeDataUrl(prepared.variants[0].dataUrl);
+      let stripResult = { lines: [], linesByIndex: [], votes: {} };
+      let stripRawText = "";
+
+      if (lotteryType === "ssq" && prepared.ssqStrips.length) {
+        report(40, "Edge 模式：逐行识别...");
+        global.__ocrLastProgressAt = Date.now();
+        global.__ocrLastProgressMsg = "Edge 逐行识别";
+        stripResult = await runSsqStripOcr(prepared.ssqStrips, function (done, total) {
+          const percent = 40 + Math.round((done / total) * 44);
+          report(percent, "逐行识别 " + done + "/" + total);
+          global.__ocrLastProgressAt = Date.now();
+        });
+        stripRawText = stripResult.lines.join("\n");
+      }
+
+      let lines = stripResult.linesByIndex.filter(Boolean);
+      if (lotteryType === "ssq" && lines.length < 4 && prepared.variants.length) {
+        report(86, "Edge 模式：补充整区识别...");
+        global.__ocrLastProgressAt = Date.now();
+        const zoneResult = await recognizeDataUrl(prepared.variants[0].dataUrl);
+        const zoneParsed = parseSsqFromOcrResult(zoneResult);
+        lines = buildFinalSsqLines(stripResult, zoneParsed, 5);
+        stripRawText = [stripRawText, zoneResult.text || ""].filter(Boolean).join("\n");
+      }
+
       await resetOcrEngine();
       await yieldToMain();
       report(92, "正在整理识别结果...");
-      const parsed =
-        lotteryType === "ssq"
-          ? parseSsqFromOcrResult(ocrResultData)
-          : collectParsedLineVotes([ocrResultData.text || ""], lotteryType);
       const previewUrl = prepared.previewUrl;
       report(100, "识别完成");
       return {
-        rawText: String(ocrResultData.text || "").trim(),
-        lines: parsed.lines,
-        detectedType: detectLotteryType(ocrResultData.text || ""),
+        rawText: stripRawText.trim(),
+        lines: lines,
+        detectedType: detectLotteryType(stripRawText),
         activeType: lotteryType,
         previewUrl: previewUrl,
       };
