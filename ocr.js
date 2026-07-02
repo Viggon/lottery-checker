@@ -661,7 +661,23 @@
     return SSQ_LAYOUT.defaultRows;
   }
 
-  const HELLO_LOTTERY_BET_HEADER = /^[①②③④⑤⑥⑦⑧⑨⑩][：:]/u;
+  const HELLO_LOTTERY_BET_HEADER =
+    /^(?:[①②③④⑤⑥⑦⑧⑨⑩]|[1-5１-５])[：:]/u;
+
+  function normalizeHelloLotteryText(rawText) {
+    return String(rawText || "")
+      .replace(/\r\n/g, "\n")
+      .replace(/[：﹕]/g, ":")
+      .replace(/[（]/g, "(")
+      .replace(/[）]/g, ")");
+  }
+
+  function isHelloLotteryBetHeaderLine(row) {
+    const trimmed = String(row || "").trim();
+    return (
+      HELLO_LOTTERY_BET_HEADER.test(trimmed) || /^[1-5][):.)]\s*\S/u.test(trimmed)
+    );
+  }
 
   function isHelloLotteryHeaderLine(row) {
     return /^(彩票类型|开奖期|开奖号码|玩法)[：:]/u.test(String(row || "").trim());
@@ -681,9 +697,15 @@
 
   function parseHelloLotteryBetNumberPart(row) {
     const trimmed = String(row || "").trim();
-    const headerMatch = trimmed.match(/^[①②③④⑤⑥⑦⑧⑨⑩][：:]\s*(.+)$/u);
-    if (!headerMatch) return null;
-    let body = headerMatch[1].trim();
+    let body = "";
+    const circleMatch = trimmed.match(/^(?:[①②③④⑤⑥⑦⑧⑨⑩]|[1-5１-５])[：:]\s*(.+)$/u);
+    if (circleMatch) {
+      body = circleMatch[1].trim();
+    } else {
+      const altMatch = trimmed.match(/^[1-5][):.)]\s*(.+)$/u);
+      if (!altMatch) return null;
+      body = altMatch[1].trim();
+    }
     body = body.replace(/\s*\(中\s*\d+\s*\+\s*\d+\s*\)\s*$/u, "");
     body = body.replace(/\s*\(中\s*\d+\s*\)\s*$/u, "");
     return parseSsqLineFromChunk(body);
@@ -695,6 +717,8 @@
     rows.forEach(function (row) {
       if (HELLO_LOTTERY_BET_HEADER.test(String(row || "").trim())) {
         count += 1;
+      } else if (/^[1-5][：:)]/u.test(String(row || "").trim())) {
+        count += 1;
       }
     });
     if (count > 0) return count;
@@ -702,26 +726,41 @@
   }
 
   function parseHelloLotterySsqLines(rawText) {
-    const rows = String(rawText || "")
+    const normalized = normalizeHelloLotteryText(rawText);
+    const rows = normalized
       .split(/\n+/)
       .map(function (line) {
         return line.trim();
       })
       .filter(Boolean);
-    const winningLine = extractHelloLotteryWinningLine(rawText);
+    const winningLine = extractHelloLotteryWinningLine(normalized);
     const lines = [];
 
     rows.forEach(function (row) {
       if (isHelloLotteryHeaderLine(row)) return;
       if (isHelloLotteryComplexLine(row)) return;
-      if (!HELLO_LOTTERY_BET_HEADER.test(row)) return;
+      if (!isHelloLotteryBetHeaderLine(row)) return;
       const parsed = parseHelloLotteryBetNumberPart(row);
       if (!parsed) return;
       if (winningLine && parsed === winningLine) return;
       if (lines.indexOf(parsed) === -1) lines.push(parsed);
     });
 
-    if (lines.length) return lines;
+    if (!lines.length) {
+      rows.forEach(function (row) {
+        if (isHelloLotteryHeaderLine(row)) return;
+        if (isHelloLotteryComplexLine(row)) return;
+        if (/^开奖号码/u.test(row)) return;
+        if (/中奖|奖金|浮动/u.test(row)) return;
+        if (!looksLikeSsqNumberLine(row)) return;
+        const parsed = parseSsqLineFromChunk(stripSsqLinePrefix(row));
+        if (!parsed) return;
+        if (winningLine && parsed === winningLine) return;
+        if (lines.indexOf(parsed) === -1) lines.push(parsed);
+      });
+    }
+
+    if (lines.length) return finalizeHelloLotterySsqLines(lines, normalized, winningLine);
 
     const filtered = rows.filter(function (row) {
       if (isHelloLotteryHeaderLine(row)) return false;
@@ -736,16 +775,25 @@
       if (lines.indexOf(line) === -1) lines.push(line);
     });
 
-    const expected = inferHelloLotteryBetCount(rawText);
-    if (expected > 0 && lines.length > expected) {
-      return lines
-        .filter(function (line) {
-          return !winningLine || line !== winningLine;
-        })
-        .slice(0, expected);
+    if (!lines.length) {
+      parseSsqLines(normalized).forEach(function (line) {
+        if (winningLine && line === winningLine) return;
+        if (lines.indexOf(line) === -1) lines.push(line);
+      });
     }
 
-    return lines;
+    return finalizeHelloLotterySsqLines(lines, normalized, winningLine);
+  }
+
+  function finalizeHelloLotterySsqLines(lines, rawText, winningLine) {
+    const expected = inferHelloLotteryBetCount(rawText);
+    let result = lines.filter(function (line) {
+      return !winningLine || line !== winningLine;
+    });
+    if (expected > 0 && result.length > expected) {
+      result = result.slice(0, expected);
+    }
+    return result;
   }
 
   function collectSsqLinesFromStripResult(stripResult, expectedCount) {
@@ -2825,8 +2873,21 @@
         ? parseHelloLotterySsqLines(rawText)
         : parseTextToLines(rawText, activeType);
 
+    if (activeType === "ssq" && !lines.length && rawText && /\d/.test(rawText)) {
+      lines = parseSsqLines(rawText).filter(function (line, index, all) {
+        return all.indexOf(line) === index;
+      });
+    }
+
     if (activeType === "ssq" && !lines.length) {
-      throw new Error("云端结果中未找到有效注单，请查看识别原文");
+      const preview = String(rawText || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 80);
+      throw new Error(
+        "云端结果中未找到有效注单，请查看识别原文" +
+          (preview ? "（原文片段：" + preview + "…）" : "")
+      );
     }
 
     report(100, "识别完成");
