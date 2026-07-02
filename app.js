@@ -1,4 +1,4 @@
-const APP_VERSION = "1.8.0";
+const APP_VERSION = "1.8.1";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -319,7 +319,6 @@ let nextDrawTimer = null;
 const els = {
   lotteryType: document.getElementById("lotteryType"),
   issueSelect: document.getElementById("issueSelect"),
-  issueNo: document.getElementById("issueNo"),
   refreshBtn: document.getElementById("refreshBtn"),
   compareBtn: document.getElementById("compareBtn"),
   fetchStatus: document.getElementById("fetchStatus"),
@@ -858,41 +857,37 @@ async function fetchLotteryPayload(type, limit) {
 }
 
 function getWantedIssue() {
-  const manual = els.issueNo ? els.issueNo.value.trim() : "";
-  if (manual) return manual;
-  const selected = els.issueSelect ? els.issueSelect.value.trim() : "";
-  return selected;
+  return els.issueSelect ? els.issueSelect.value.trim() : "";
 }
 
-function setIssueInputs(issue) {
+function setIssueSelection(issue) {
+  if (!els.issueSelect) return;
   const wanted = String(issue || "").trim();
   if (!wanted) {
-    if (els.issueSelect) els.issueSelect.value = "";
-    if (els.issueNo) els.issueNo.value = "";
+    els.issueSelect.value = "";
     return;
   }
-  const inList =
-    state.draws &&
-    state.draws.some(function (draw) {
-      return String(draw.issue) === wanted;
-    });
-  if (inList && els.issueSelect) {
-    els.issueSelect.value = wanted;
-    if (els.issueNo) els.issueNo.value = "";
-    return;
+  const hasOption = Array.from(els.issueSelect.options).some(function (opt) {
+    return opt.value === wanted;
+  });
+  if (!hasOption) {
+    const opt = document.createElement("option");
+    opt.value = wanted;
+    opt.textContent = "第 " + wanted + " 期";
+    els.issueSelect.appendChild(opt);
   }
-  if (els.issueSelect) els.issueSelect.value = "";
-  if (els.issueNo) els.issueNo.value = wanted;
+  els.issueSelect.value = wanted;
 }
 
 function renderIssueOptions(draws) {
   if (!els.issueSelect) return;
   const wanted = getWantedIssue();
   const options = ['<option value="">最新一期</option>'];
-  draws.forEach(function (draw) {
+  draws.forEach(function (draw, index) {
     const issue = String(draw.issue);
+    const latestTag = index === 0 ? "（最新）" : "";
     const label =
-      "第 " + issue + " 期" + (draw.date ? " · " + draw.date : "");
+      "第 " + issue + " 期" + latestTag + (draw.date ? " · " + draw.date : "");
     options.push(
       '<option value="' + escapeHtml(issue) + '">' + escapeHtml(label) + "</option>"
     );
@@ -900,10 +895,8 @@ function renderIssueOptions(draws) {
   els.issueSelect.innerHTML = options.join("");
   if (wanted && draws.some(function (draw) { return String(draw.issue) === wanted; })) {
     els.issueSelect.value = wanted;
-    if (els.issueNo) els.issueNo.value = "";
-  } else if (wanted && els.issueNo) {
+  } else {
     els.issueSelect.value = "";
-    els.issueNo.value = wanted;
   }
 }
 
@@ -1065,7 +1058,7 @@ async function handleOcrFile(file) {
     setOcrStatus(`识别完成，共 ${result.lines.length} 注，正在对照...`);
 
     if (result.detectedIssue) {
-      setIssueInputs(result.detectedIssue);
+      setIssueSelection(result.detectedIssue);
       pushOcrDiag("ticket issue: " + result.detectedIssue);
     }
 
@@ -1298,7 +1291,7 @@ async function fetchDraws() {
       if (draw) {
         mergeDrawIntoList(draw);
         renderIssueOptions(state.draws);
-        setIssueInputs(wantedIssue);
+        setIssueSelection(wantedIssue);
       }
     }
 
@@ -1431,7 +1424,6 @@ function onTypeChange() {
   if (els.issueSelect) {
     els.issueSelect.innerHTML = '<option value="">最新一期</option>';
   }
-  if (els.issueNo) els.issueNo.value = "";
   if (nextDrawTimer) {
     clearInterval(nextDrawTimer);
     nextDrawTimer = null;
@@ -1466,18 +1458,8 @@ els.refreshBtn.addEventListener("click", fetchDraws);
 els.compareBtn.addEventListener("click", () => compareNumbers());
 if (els.issueSelect) {
   els.issueSelect.addEventListener("change", function () {
-    if (els.issueNo) els.issueNo.value = "";
     applyIssueSelection();
   });
-}
-if (els.issueNo) {
-  els.issueNo.addEventListener("keydown", function (event) {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      applyIssueSelection();
-    }
-  });
-  els.issueNo.addEventListener("change", applyIssueSelection);
 }
 bindScanInputs();
 
@@ -1495,6 +1477,10 @@ loadAccessInfo();
 preloadOcrAssets();
 if (els.appVersion) {
   els.appVersion.textContent = "v" + APP_VERSION;
+}
+const heroVersion = document.getElementById("heroVersion");
+if (heroVersion) {
+  heroVersion.textContent = "v" + APP_VERSION;
 }
 fetchDraws();
 if (window.LotteryOcrWatchdog) {

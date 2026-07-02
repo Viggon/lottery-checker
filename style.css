@@ -732,17 +732,17 @@ textarea {
   margin-bottom: 8px;
 }
 
-.issue-picker-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
-  gap: 8px;
-}
-
-.issue-picker-row select,
-.issue-picker-row input {
+.issue-picker select {
   min-width: 0;
   padding: 10px 12px;
   font-size: 0.88rem;
+}
+
+.hero-version {
+  font-size: 0.72rem;
+  font-weight: 700;
+  opacity: 0.72;
+  margin-left: 4px;
 }
 
 .draw-meta strong {
