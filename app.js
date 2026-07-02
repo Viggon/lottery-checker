@@ -1,4 +1,4 @@
-const APP_VERSION = "1.5.9";
+const APP_VERSION = "1.6.0";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -617,9 +617,15 @@ function showOcrErrorDialog(err) {
 }
 
 function preloadOcrAssets() {
-  pushOcrDiag("preload start cv=" + !!(window.cv && window.cv.Mat));
+  pushOcrDiag("preload start (lazy opencv)");
   if (window.LotteryOcrWatchdog) {
     window.LotteryOcrWatchdog.hideBootOverlay();
+  }
+  var boot = document.getElementById("bootOverlay");
+  if (boot) {
+    boot.classList.add("hidden");
+    boot.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
   }
   if (!window.__lotteryPaddlePreload) {
     window.__lotteryPaddlePreload = true;
