@@ -1,4 +1,4 @@
-const APP_VERSION = "1.9.3";
+const APP_VERSION = "1.9.4";
 window.__appVersion = APP_VERSION;
 
 const OCR_TOTAL_TIMEOUT_MS_MOBILE = 90000;
@@ -8,6 +8,7 @@ const OCR_CLOUD_STALL_MS = 120000;
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
 const CWL_ORIGIN = "https://www.cwl.gov.cn";
+const CWL_SSQ_HOME_URL = CWL_ORIGIN + "/";
 const CWL_SSQ_DRAW_LIST_URL = CWL_ORIGIN + "/ygkj/wqkjgg/ssq/";
 const SSQ_FUYUN_ISSUE_START = 2026014;
 const SSQ_FUYUN_POOL_STOP = 300000000;
@@ -441,7 +442,7 @@ function buildCwlSsqOfficialUrl(draw) {
     const path = String(draw.cwlDetailsLink);
     return path.indexOf("http") === 0 ? path : CWL_ORIGIN + path;
   }
-  return CWL_SSQ_DRAW_LIST_URL;
+  return CWL_SSQ_HOME_URL;
 }
 
 function renderCwlOfficialLink(label, draw, className) {
@@ -449,11 +450,41 @@ function renderCwlOfficialLink(label, draw, className) {
   return (
     '<a class="' +
     className +
-    '" href="' +
+    ' cwl-official-link" href="' +
     escapeHtml(url) +
-    '" target="_blank" rel="noopener noreferrer">' +
+    '" data-cwl-url="' +
+    escapeHtml(url) +
+    '" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">' +
     escapeHtml(label) +
     "</a>"
+  );
+}
+
+async function openCwlOfficialUrl(url) {
+  const target = String(url || CWL_SSQ_HOME_URL).trim();
+  let copied = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(target);
+      copied = true;
+    }
+  } catch (_) {}
+
+  const link = document.createElement("a");
+  link.href = target;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.referrerPolicy = "no-referrer";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setStatus(
+    copied
+      ? "已打开福彩官网；若提示访问异常，链接已复制，请粘贴到 Safari 地址栏打开"
+      : "已打开福彩官网；若提示访问异常，请手动访问 www.cwl.gov.cn",
+    false
   );
 }
 
@@ -1576,7 +1607,7 @@ function renderDraw(draw) {
       fuyunHint = '<span class="draw-fuyun-tag">福运奖进行中（3+0 得 5 元）</span>';
     } else if (fuyunStatus === "unknown") {
       fuyunHint = renderCwlOfficialLink(
-        "福运奖状态未知，点此查看福彩官网（奖池/福运奖）",
+        "福运奖状态未知，点此打开福彩官网（阳光开奖→双色球）",
         draw,
         "draw-fuyun-tag draw-fuyun-tag-unknown draw-fuyun-tag-link"
       );
