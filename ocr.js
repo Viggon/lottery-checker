@@ -687,8 +687,72 @@
   }
 
   const MAX_IMAGE_EDGE = 1200;
+  const MOBILE_MAX_IMAGE_EDGE = 640;
   const IMAGE_LOAD_TIMEOUT_MS = 15000;
   const PREPROCESS_STEP_TIMEOUT_MS = 20000;
+  const CANVAS_ENCODE_TIMEOUT_MS = 12000;
+
+  function getMaxImageEdge() {
+    return isMobileLike() ? MOBILE_MAX_IMAGE_EDGE : MAX_IMAGE_EDGE;
+  }
+
+  function canvasToDataUrlAsync(canvas, timeoutMs) {
+    timeoutMs = timeoutMs || CANVAS_ENCODE_TIMEOUT_MS;
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(
+          new Error("图片编码超时（" + Math.round(timeoutMs / 1000) + " 秒）")
+        );
+      }, timeoutMs);
+
+      if (typeof canvas.toBlob === "function") {
+        canvas.toBlob(
+          function (blob) {
+            if (done) return;
+            if (!blob) {
+              done = true;
+              clearTimeout(timer);
+              reject(new Error("图片编码失败"));
+              return;
+            }
+            var reader = new FileReader();
+            reader.onload = function () {
+              if (done) return;
+              done = true;
+              clearTimeout(timer);
+              resolve(reader.result);
+            };
+            reader.onerror = function () {
+              if (done) return;
+              done = true;
+              clearTimeout(timer);
+              reject(new Error("图片读取失败"));
+            };
+            reader.readAsDataURL(blob);
+          },
+          "image/jpeg",
+          0.82
+        );
+        return;
+      }
+
+      try {
+        var url = canvas.toDataURL("image/jpeg", 0.82);
+        done = true;
+        clearTimeout(timer);
+        resolve(url);
+      } catch (err) {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      }
+    });
+  }
 
   function isMobileLike() {
     const touch =
@@ -737,9 +801,10 @@
   }
 
   function createScaledCanvasFromSource(source) {
+    const maxEdge = getMaxImageEdge();
     const srcW = source.width;
     const srcH = source.height;
-    const scale = Math.min(1, MAX_IMAGE_EDGE / srcW, MAX_IMAGE_EDGE / srcH);
+    const scale = Math.min(1, maxEdge / srcW, maxEdge / srcH);
     const width = Math.max(1, Math.round(srcW * scale));
     const height = Math.max(1, Math.round(srcH * scale));
     const canvas = document.createElement("canvas");
@@ -776,8 +841,8 @@
       try {
         const bitmap = await withTimeout(
           createImageBitmap(file, {
-            resizeWidth: MAX_IMAGE_EDGE,
-            resizeHeight: MAX_IMAGE_EDGE,
+            resizeWidth: getMaxImageEdge(),
+            resizeHeight: getMaxImageEdge(),
             resizeQuality: "high",
           }),
           IMAGE_LOAD_TIMEOUT_MS,
@@ -1015,7 +1080,7 @@
 
   async function prepareTicketCanvas(source, report) {
     let base =
-      source.width > MAX_IMAGE_EDGE || source.height > MAX_IMAGE_EDGE
+      source.width > getMaxImageEdge() || source.height > getMaxImageEdge()
         ? createScaledCanvasFromSource(source)
         : source;
 
@@ -1087,31 +1152,28 @@
 
   async function buildPreprocessVariantsFromCanvasAsync(base, lotteryType, report) {
     if (isMobileLike()) {
-      pulseProgress(report, 36, "手机快速模式：准备识别图...");
+      pulseProgress(report, 36, "手机快速模式：缩小图片...");
       await yieldToMain();
-      const previewUrl = canvasToDataUrl(base);
+      const maxEdge = MOBILE_MAX_IMAGE_EDGE;
+      const scale = Math.min(1, maxEdge / Math.max(base.width, base.height));
+      const small = scale < 1 ? scaleCanvas(base, scale) : base;
+      await yieldToMain();
+
       pulseProgress(report, 38, "手机快速模式：裁剪号码区...");
       await yieldToMain();
-
+      var crop = small;
       if (lotteryType === "ssq") {
-        const zone = cropSsqNumberZoneFast(base);
-        await yieldToMain();
-        pulseProgress(report, 40, "手机快速模式：增强对比度...");
-        const enhanced = renderVariant(zone, 0, 0, zone.width, zone.height, "contrast");
-        await yieldToMain();
-        const dataUrl = canvasToDataUrl(enhanced);
-        pulseProgress(report, 42, "图片准备完成，正在加载 OCR...");
-        return {
-          previewUrl: previewUrl,
-          variants: [{ id: "mobile-ssq-zone", dataUrl: dataUrl }],
-          ssqStrips: [],
-        };
+        crop = cropSsqNumberZoneFast(small);
       }
+      await yieldToMain();
 
+      pulseProgress(report, 40, "手机快速模式：编码图片...");
+      await yieldToMain();
+      const dataUrl = await canvasToDataUrlAsync(crop, CANVAS_ENCODE_TIMEOUT_MS);
       pulseProgress(report, 42, "图片准备完成，正在加载 OCR...");
       return {
-        previewUrl: previewUrl,
-        variants: [{ id: "mobile-full", dataUrl: previewUrl }],
+        previewUrl: dataUrl,
+        variants: [{ id: "mobile-fast", dataUrl: dataUrl }],
         ssqStrips: [],
       };
     }

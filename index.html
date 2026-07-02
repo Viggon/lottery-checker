@@ -157,6 +157,13 @@
       </div>
     </div>
 
+    <iframe
+      src="./stall-monitor.html"
+      title="ocr stall monitor"
+      style="position: absolute; width: 1px; height: 1px; border: 0; opacity: 0; pointer-events: none"
+      aria-hidden="true"
+    ></iframe>
+
     <script src="./ocr-watchdog.js"></script>
     <script>
       document.body.style.overflow = "hidden";
@@ -169,7 +176,7 @@
           navigator.userAgent || ""
         );
         LotteryOcrWatchdog.startBootMonitor(isMobile ? 120000 : 180000);
-        LotteryOcrWatchdog.startPermanentMonitor(isMobile ? 12000 : 18000);
+        LotteryOcrWatchdog.startPermanentMonitor(isMobile ? 8000 : 15000);
       }
     </script>
     <script src="./vendor/opencv/opencv.js" data-lottery-opencv="1"></script>

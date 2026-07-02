@@ -1,4 +1,4 @@
-const APP_VERSION = "1.5.7";
+const APP_VERSION = "1.5.8";
 window.__appVersion = APP_VERSION;
 
 const HUINIAO_API = "https://api.huiniao.top/interface/home/lotteryHistory";
@@ -353,8 +353,8 @@ let ocrLastStatus = "";
 let ocrErrorShown = false;
 const OCR_WATCHDOG_MS_MOBILE = 60000;
 const OCR_WATCHDOG_MS_DESKTOP = 90000;
-const OCR_STALL_MS_MOBILE = 12000;
-const OCR_STALL_MS_DESKTOP = 18000;
+const OCR_STALL_MS_MOBILE = 8000;
+const OCR_STALL_MS_DESKTOP = 15000;
 
 function normalize2(value) {
   const n = String(value).trim();
